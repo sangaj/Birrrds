@@ -316,7 +316,11 @@ width <- round_any(width0,0.1,f=ceiling)
 lat.det <- maxdist/111
 log.det <- maxdist/(cos(52.283*pi/180)*111.321)
 
-### observation area
+### observation area and grid
+leftup <- c(4.705-log.det, 52.368+lat.det)
+leftbo <- c(4.705-log.det, 52.283-lat.det)
+rightup <- c(4.815+log.det, 52.368+lat.det)
+rightbo <- c(4.815+log.det, 52.283-lat.det)
 
 
 
