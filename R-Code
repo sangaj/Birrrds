@@ -1,0 +1,324 @@
+
+# Checking if packages needed are installed otherwise install them:
+if (! require("ggmap")) {
+  install.packages("ggmap")
+  library(ggmap)
+}
+if (! require("sp")) {
+  install.packages("sp")
+  library(sp)
+}
+if (! require("rgdal")) {
+  install.packages("rgdal")
+  library(rgdal)
+}
+if (! require("rgeos")) {
+  install.packages("rgeos")
+  library(rgeos)
+}
+if (! require("ggplot2")) {
+  install.packages("ggplot2")
+  library(ggplot2)
+}
+if (! require("leaflet")) {
+  install.packages("leaflet")
+  library(leaflet)
+}
+if (! require("plyr")) {
+  install.packages("plyr")
+  library(plyr)
+}
+if (! require("dplyr")) {
+  install.packages("dplyr")
+  library(dplyr)
+}
+if (! require("magrittr")) {
+  install.packages("magrittr")
+  library(magrittr)
+}
+if (! require("readr")) {
+  install.packages("readr")
+  library(readr)
+}
+if (! require("lubridate")) {
+  install.packages("lubridate")
+  library(lubridate)
+}
+if (! require("RColorBrewer")) {
+  install.packages("RColorBrewer")
+  library(RColorBrewer)
+}
+if (! require("classInt")) {
+  install.packages("classInt")
+  library(classInt)
+}
+if (! require("scatterplot3d")) {
+  install.packages("scatterplot3d")
+  library(scatterplot3d)
+}
+if (! require("plot3D")) {
+  install.packages("plot3D")
+  library(plot3D)
+}
+if (! require("geonames")) {
+  install.packages("geonames")
+  library(geonames)
+}
+if (! require("lubridate")) {
+  install.packages("lubridate")
+  library(lubridate)
+}
+if (! require("wkb")) {
+  install.packages("wkb")
+  library(wkb)
+}
+if (! require("animation")) {
+  install.packages("animation")
+  library(animation)
+}
+
+if (! require("pastecs")) {
+  install.packages("pastecs")
+  library(animation)
+}
+
+
+
+track <- read.table("2015_12_track.csv",header=T,sep=";")
+alarm <- read.table("2015_12_alarms.csv",header=T,sep=";")
+ip <- read.table("2015_12_ip_metainfo.csv",header=T,sep=";")
+miss <- read.table("2015_12_nearmiss.csv",header=T,sep=";")
+estimate <-  read.table("2015_12_trackestimate.csv",header=T,sep=";")
+
+
+tmp<- read.table("tmp100k.csv",header=T,sep=";")
+tmp.a <- gsub("LINESTRING Z ","",tmp) 
+tmp.a <- gsub("[()]","",tmp.a)
+tmp.a <- unlist(strsplit(as.character(tmp.a), ","))
+tmp.a <- unlist(strsplit(tmp.a, " "))
+df <- t(matrix(tmp.a,nrow=3))
+scatterplot3d(df[,1], df[,2], df[,3], highlight.3d = TRUE, col.axis = "blue",
+              col.grid = "lightblue")
+
+
+tmp <- read.table("tmp10k.csv",header=T,sep=";")
+tmp.a <- gsub("LINESTRING Z ","",tmp$st_astext) 
+tmp.a <- gsub("[()]","",tmp.a)
+tmp.a <- strsplit(as.character(tmp.a), ",")
+tmp.a <- lapply(tmp.a, function(x) unlist(strsplit(x, " ")))
+df <-lapply(tmp.a, function(x) t(matrix(x,nrow=3)))
+colnames <- c("X","Y","Z") 
+for (i in seq_along(df)){
+  colnames(df[[i]]) <- colnames
+}
+df.new <- lapply(df,function(x) subset(x,as.numeric(x[,3]) < 30))
+s3d <- scatterplot3d(df.new[[1]], highlight.3d = TRUE,type="l",xlim=c(4.6,4.8),ylim=c(52.1,52.5),zlim=c(5,6),
+                     col.axis = "grey",col.grid = "white")
+for (i in 2:10000){
+  s3d$points3d(df.new[[i]],col=i, type="l")
+} 
+
+
+
+
+
+###  kernal plot
+
+df.new.kernal <- rbind.fill.matrix(df.new)
+sp_point <- cbind(as.numeric(df.new.kernal[,1]),as.numeric(df.new.kernal[,2]))
+
+
+sp_points <- SpatialPoints(coords=sp_point, proj4string=CRS("+proj=utm +zone=31 +datum=WGS84"))
+
+grd <- Sobj_SpatialGrid(sp_points,maxDim=100)$SG
+grd <- GridTopology(summary(grd)$grid[,1],cellsize=summary(grd)$grid[,2],cells.dim=summary(grd)$grid[,3])
+
+poly <- as.points(c(min(sp_point[,1]),max(sp_point[,1]),max(sp_point[,1]),min(sp_point[,1])),c(max(sp_point[,2]),max(sp_point[,2]),min(sp_point[,2]),min(sp_point[,2])))
+mserw <- mse2d(sp_point, poly=poly, nsmse=100, range=.1)
+bw <- mserw$h[which.min(mserw$mse)] 
+
+kernel1 <- spkernel2d(sp_point, poly=poly, h0=bw, grd=grd)
+
+df <- data.frame(kernel1=kernel1)
+SG <- SpatialGridDataFrame(grd, data=df)
+
+
+## Plot Kernel Maps
+
+ker.palette <- colorRampPalette(c("white", "orange","red","darkred","brown"), space = "rgb")
+
+spplot(SG,col.regions=ker.palette(100),names.attr=c(paste("Bandwidth = ",bw, sep="", collapse="")))
+
+
+
+## Contiguity Neighbors
+W_cont_el <- poly2nb(sp_point, queen=T)
+W_cont_el_mat <- nb2listw(W_cont_el, style="W", zero.policy=TRUE)
+mod.sar <- lagsarlm(classification_id ~ score, data = tmp, listw=W_cont_el_mat, zero.policy=T, tol.solve=1e-12)
+summary(mod.sar)
+
+res <- mod.sar$residuals
+
+classes_fx <- classIntervals(res, n=5, style="fixed", fixedBreaks=c(-50,-25,-5,5,25,50), rtimes = 1)
+cols <- findColours(classes_fx,pal)
+
+par(mar=rep(0,4))
+plot(data,col=cols, border="grey",pretty=T)
+legend(x="bottom",cex=1,fill=attr(cols,"palette"),bty="n",legend=names(attr(cols, "table")),title="Residuals from SAR Model",ncol=5)
+
+
+
+# plot point with  google map
+tmp.old <- read.table("tmp100k.csv",header=T,sep=";")
+tmp.old[is.na(tmp.old)] <- 0
+tmp <- tmp.old[tmp.old$classification_id != 1,]
+tmp.vehicle.slow <- tmp.old[tmp.old$classification_id == 5,]
+tmp.vehicle <- tmp.old[tmp.old$classification_id == 10,]
+tmp.a <- gsub("LINESTRING Z ","",tmp$st_astext) 
+tmp.a <- gsub("[()]","",tmp.a)
+tmp.a <- strsplit(as.character(tmp.a), ",")
+tmp.a <- lapply(tmp.a, function(x) unlist(strsplit(x, " ")))
+df.a <-lapply(tmp.a, function(x) t(matrix(x,nrow=3)))
+colnames <- c("X","Y","Z") 
+for (i in seq_along(df.a)){
+  colnames(df.a[[i]]) <- colnames
+}
+#df.new <- lapply(df.a,function(x) subset(x,as.numeric(x[,3]) < 200))
+#map <- qmap("schiphol",zoom = 11, maptype = 'hybrid')
+
+#df.new.kernal <- rbind.fill.matrix(df.new)
+#sp_point <-as.data.frame(cbind(as.numeric(df.new.kernal[,1]),as.numeric(df.new.kernal[,2])))
+#map + geom_point(data = sp_point, aes(x = V1, y = V2), color="#D55E00", size=1, alpha=0.5)
+options(expressions=10000)
+for (i in 100:500){
+  sp_line.a <-as.data.frame(cbind(as.numeric(df.a[[i]][,1]),as.numeric(df.a[[i]][,2])))
+  map <- map + geom_line(data = sp_line.a, aes(x = V1, y = V2), color="red", size=1, alpha=0.5)
+}
+print(map)
+
+
+
+### time interval for each line
+tmp.old <- read.table("tmp100k.csv",header=T,sep=";")
+tmp.old[is.na(tmp.old)] <- 0
+tmp.old <- tmp.old[tmp.old$classification_id != 1,]
+tmp.old$timestamp_start <- ymd_hms(substr(tmp.old$timestamp_start,1,19))
+tmp.old$timestamp_end <- ymd_hms(substr(tmp.old$timestamp_end,1,19))
+tmp.old$interval <- as.numeric(tmp.old$timestamp_end-tmp.old$timestamp_start) ## interval from 4 to 722
+hist(tmp.old$interval,breaks=100,xlim=c(0,600))
+
+
+
+### combine estimate track with weather
+estimate <-  read.table("2015_12_trackestimate.csv",header=T,sep=";")
+estimate$timestamp <- ymd_hms(substr(estimate$timestamp,1,19))
+weather <- read.table("2015_12_weather.csv",header=T,sep=";")
+library(lubridate)
+#weather$newtime <- ymd_hms(substr(weather$timestamp,1,19))
+weather$timestamp <- ymd_hms(substr(weather$timestamp,1,19))
+#weather <- weather[,-2]
+#colnames(weather)[grepl("newtime", colnames(weather))] <- "timestamp"
+weather <- weather[!duplicated(weather$timestamp),]
+weather.tmp <- weather
+weather.tmp$timestamp <- weather.tmp$timestamp+1
+tmp <- rbind(weather,weather.tmp)
+tmp <- tmp[order(tmp$timestamp),]
+tmp <- tmp[!duplicated(tmp$timestamp),]
+while (nrow(tmp) < 86401){
+  for (i in 2:nrow(tmp))
+  {if(as.numeric(difftime(tmp$timestamp[i],tmp$timestamp[i-1])) > 1)
+  { 
+    vector <- tmp[i-1,]
+    vector$timestamp <- vector$timestamp+1
+    tmp <- rbind(tmp,vector)
+  } 
+  }
+  tmp <- tmp[order(tmp$timestamp),]
+} # notice not all interval is 2seconds and some of them even no more than 1second for two records
+tmp$id <- NULL
+data <- join(estimate,tmp,by="timestamp") # combine two dataframe according to timestamp
+data$id <- NULL
+track <-  read.table("2015_12_track.csv",header=T,sep=";")
+data <- join(data,track,by="id")
+
+
+### plot as the time goes
+estimate.plot <-  read.table("estimate100k.csv",header=T,sep=";")
+estimate.plot$timestamp <- ymd_hms(substr(estimate.plot$timestamp,1,19))
+estimate.plot <- estimate.plot[order(estimate.plot$timestamp),]
+estimate.plot$st_astext <- gsub("POINT Z ","",estimate.plot$st_astext) 
+estimate.plot$st_astext <- gsub("[()]","",estimate.plot$st_astext)
+tmp.estimate <- subset(estimate.plot,select = c(timestamp,st_astext))
+tmp.estimate$interval <- as.numeric(tmp.estimate$timestamp-min(tmp.estimate$timestamp))
+map <- qmap("schiphol",zoom = 11, maptype = 'hybrid')
+b <- as.vector(tmp.estimate$st_astext)
+c <- unlist(strsplit(b,split=" "))
+position <- matrix(as.numeric(c),ncol=3,byrow=T)
+tmp.estimate$longitude <- position[,1]
+tmp.estimate$latitude <- position[,2]
+new <- tmp.estimate[,c(3:5)]
+xg <- split(new,new$interval)
+
+
+
+for (i in 1263:length(xg)) 
+{
+  map <- qmap("schiphol",zoom = 12, maptype = 'hybrid')
+  sp_point <-as.data.frame(cbind(xg[[i]]$longitude,xg[[i]]$latitude))
+  map <-  map + geom_point(data = sp_point, aes(x = V1, y = V2), color="lightblue", size=1, alpha=1)
+  ggsave(paste('',i, 'plot.png', sep=""), map)
+}
+
+
+
+
+
+
+### relative distance
+distance <-  read.table("track_full_dump.csv",header=T,sep=";")
+distance[is.na(distance)] <- 0
+distance1 <- subset(distance,classification_id != 1)
+distance2<- gsub("LINESTRING Z ","",distance1$st_astext) 
+distance.a <- gsub("[()]","",distance2)
+distance.a <- strsplit(as.character(distance.a), ",")
+distance.a <- lapply(distance.a, function(x) unlist(strsplit(x, " ")))
+df <-lapply(distance.a, function(x) t(matrix(x,nrow=3)))
+colnames <- c("X","Y","Z") 
+for (i in seq_along(df)){
+  colnames(df[[i]]) <- colnames
+}
+d <- numeric(0)
+
+func <- function(x){
+  for (i in 1:nrow(x)){
+    dx <- as.numeric(x[1,1])*111.321*cos(as.numeric(x[1,2])*pi/180) - as.numeric(x[i,1])*111.321*cos(as.numeric(x[i,2])*pi/180)
+    dy <- (as.numeric(x[1,2])-as.numeric(x[i,2]))*111
+    d[i] <- sqrt(dx^2+dy^2)
+  }
+  max(d[i])
+}
+
+df.1 <- lapply(df,func)
+maxdist <- min(round_any(max(head(sort(unlist(df.1)),0.99*length(unlist(df.1)))),0.1,f=ceiling),2.5)
+
+
+l.lon <- 4.705
+l.lat <- 52.368
+r.lon <- 4.815
+r.lat <- 52.283
+dlon <-  4.815-4.705
+dlat <-  52.368-52.368 
+length0 <-  4.815*111.699 * cos(52.368 * pi/180) - 4.705*111.699 * cos(52.368 * pi/180)##??
+length <- round_any(length0,0.1,f=ceiling)
+width0 <-  52.368*110.574-52.283*110.574
+width <- round_any(width0,0.1,f=ceiling)
+### the area which team could cover
+lat.det <- maxdist/111
+log.det <- maxdist/(cos(52.283*pi/180)*111.321)
+
+### observation area
+
+
+
+
+
