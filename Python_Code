@@ -1,0 +1,112 @@
+# all these below based on Spark
+#track_subset.withColumn('dt2', F.date_format('dt', 'yyyy-MM-dd HH:mm:ss')).select('dt','dt2').toPandas().head()
+track_subset=track_subset.withColumn('dt', F.date_format('dt', 'yyyy-MM-dd HH:mm:ss'))# transform the time into seconds
+#track_subset.show(3)
+weather_table = "birds.weather"
+weather = hc.read.table(weather_table)
+weather_subset = (weather.where("dt > '2015-07-01 00:00:00'")
+                     .where("dt < '2015-07-01 23:59:59'")).persist()
+weather_subset=weather_subset.withColumn('dt', F.date_format('dt', 'yyyy-MM-dd HH:mm:ss'))# transform the time into seconds(not show half seconds)
+weather_subset.show(3)
+weatherSubset=weather_subset.dropDuplicates(['dt'])
+weatherSubset=weatherSubset.orderBy('dt')
+weatherSubset.count() # drop duplication
+while weatherSubset.count()<86399:
+    weatherSubset_dup=weatherSubset.withColumn('dt', (weatherSubset.dt.astype('timestamp') + F.expr("INTERVAL 1 SECOND")).astype('string'))
+    weatherSubset=weatherSubset_dup.unionAll(weatherSubset).dropDuplicates(['dt']).orderBy('dt')
+# copy the information and plus 1 seconds on the original one to extend the whole 24hours
+# combine two dataframe into one and drop duplication and order it 
+weatherSubset.count() # loop is terrible slow
+
+
+
+import findspark
+findspark.init('/data/spark-1.6.0-bin-hadoop2.6')
+from pyspark import SparkContext, HiveContext
+from pyspark.sql import functions as F
+from pyspark.sql import Window as w
+%matplotlib inline
+import seaborn as sns
+import pandas as pd
+
+# load Spark and HiveContext
+sc = SparkContext()
+hc = HiveContext(sc)
+
+track_table = "birds.track"
+track = hc.read.table(track_table) # input track table which contanis trajectory
+track = track.select('id','classification_id','species_id','distance_travelled','score')
+
+trackestimate_table = "birds.trackestimate"
+trackestimate = hc.read.table(trackestimate_table)  # input trackestimate table which contanis each location
+
+track_subset = (trackestimate.where("dt > '2015-07-01 00:00:00'")
+                     .where("dt < '2015-07-01 23:59:59'")).persist()
+                     #.where("classification_id != 10")
+                     #.where("classification_id != 5")
+                     #.where("classification_id != 1"))
+                     #.where("distance_travelled < 10000")) # select one day data
+                     
+start_time = '2015-07-01 00:00:01'
+end_time = '2015-07-02 00:00:00'
+all_times = pd.date_range(start_time,end_time, freq='s', closed='left')# generate one day value in each seconds
+all_times = hc.createDataFrame(pd.DataFrame((all_times).astype(str), columns=['ts']))
+all_times.head(10) # dataframe of each seconds
+all_times.count()
+
+weather_table = "birds.weather"
+weather = hc.read.table(weather_table)
+weather.persist() # read  weather data
+weather.head(10)
+
+weather_sec = weather.withColumn('ts', F.date_format('dt', 'yyyy-MM-dd HH:mm:ss'))['dt','ts']
+weather_sec.show(10)
+# add a new column with new time format 
+
+ts = None
+for delta_sec in range(31): 
+    if ts is None:
+        ts = hc.createDataFrame(pd.DataFrame((all_times+(24*60*60)*delta_sec).astype(str), columns=['ts']))
+    else:
+        ts = ts.unionAll(hc.createDataFrame(pd.DataFrame((all_times+(24*60*60)*delta_sec).astype(str), columns=['ts'])))
+ts.head(100) # generate the time in one month
+
+#weather_full = ts.join(weather_sec, on=weather_sec.ts==ts.ts, how='left').drop(weather_sec.ts)
+weather_full = all_times.join(weather_sec, on=weather_sec.ts==all_times.ts, how='left').drop(weather_sec.ts)
+weather_full = weather_full.orderBy('ts').dropDuplicates(['ts'])# join two tables one is with all seconds, one is weather data
+weather_full.count()
+
+window = w.partitionBy().orderBy('ts')   
+lag_windows = [F.lag(F.col('dt'),count=lag).over(window) for lag in range(1,10)] 
+# fill in the data for interval from 1 to 10,interval depends on the data,in some day the interval time is rather bi
+#?? function # notice the interval time vary from 1 to .... on different days
+
+weather_filld = (weather_full
+    .withColumn('dt_new',F.coalesce(*lag_windows))
+    .withColumn('dt', F.when(F.col('dt').isNull(), F.col('dt_new')).otherwise(F.col('dt'))))['ts','dt']
+weather_filld.head(100)
+
+full_data= weather_filld.join(weather, on=weather.dt==weather_filld.dt, how='left').drop(weather.dt).drop(weather_filld.dt).drop(weather.id)
+full_data.count()
+
+df = weather_filld.filter(weather_filld.dt.isNull()).toPandas()
+
+df.groupby(pd.to_datetime(df.ts).dt.date).count()
+
+ts.filter(ts.ts<'2015-07-01 01:20:55').filter(ts.ts>'2015-07-01 01:20:49').head(100)
+
+trackestimate_subset = track_subset.withColumn('dt', F.date_format('dt', 'yyyy-MM-dd HH:mm:ss'))
+trackestimate_subset.count()
+
+data = trackestimate_subset.join(full_data,on=trackestimate_subset.dt==full_data.ts,how='left').drop(full_data.ts).persist()
+data.count()
+
+#data.filter(data.relativehumidity.isNull()).count() - data.count() # check if all NULL
+#data.filter(data.dewpoint.isNull()).count() - data.count() # check if all NULL
+data=data.drop(data.dewpoint).drop(data.relativehumidity)
+data=data.withColumn('dt', F.date_format('dt', 'yyyy-MM-dd HH:mm:ss'))
+data.count()
+
+data = data.join(track,on=track.id==data.track_id).drop(track.id)
+data.head(10)
+
