@@ -322,7 +322,14 @@ leftbo <- c(4.705-log.det, 52.283-lat.det)
 rightup <- c(4.815+log.det, 52.368+lat.det)
 rightbo <- c(4.815+log.det, 52.283-lat.det)
 
-
+bound.x <- c(4.705-log.det,52.283-lat.det)
+bound.y <- c(4.815+log.det,52.368+lat.det)
+bound.matix <- data.frame(bound.x,bound.y)
+n <- 10
+offset <- bound.matix[,1]
+size <- (bound.matix[,2]-bound.matix[,1])/n
+dim <- c(n,n)
+grid <- GridTopology(cellcentre.offset =  offset, cellsize = size, cells.dim = dim)
 
 
 
