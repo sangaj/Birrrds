@@ -110,3 +110,38 @@ data.count()
 data = data.join(track,on=track.id==data.track_id).drop(track.id)
 data.head(10)
 
+
+
+# the fixed area 
+import numpy as np
+l_lon = 4.705
+r_lat = 52.368
+r_lon = 4.815
+l_lat = 52.283
+dlon =  r_lon-l_lon
+dlat =  r_lat-l_lat 
+length0 =  r_lon*111.699 * np.cos(r_lat * np.pi/180) - l_lon*111.699 * np.cos(r_lat * np.pi/180)
+length = (int(np.ceil(length0*10)))/10.
+width0 =  r_lat*110.574 - l_lat*110.574
+width =  (int(np.ceil(width0*10)))/10.
+
+
+# the potential extended distance
+from pyspark import SparkContext
+from pyspark.sql.functions import UserDefinedFunction
+from pyspark.sql.functions import asc
+from pyspark.sql.types import StringType
+from shapely.wkb import loads
+from shapely import wkt
+track_table = "birds.track"
+track = hc.read.table(track_table) # input track table which contanis trajectory
+track_trajectory = track.select('trajectory')
+
+def max_dist(b):
+    return max(((np.array(b)[1:,0]*111.321*np.cos(np.array(b)[1:,1]*np.pi/180) 
+                 - b[0][0]*111.321*np.cos(b[0][1]*np.pi/180))**2 + 
+                ((np.array(b)[1:,1] - b[0][1])*111)**2)**.5)
+# udf = UserDefinedFunction(lambda x: max(map(distance,zip(str(loads(x,hex=True).__geo_interface__['coordinates'])[1:],
+#                                                          str(loads(x,hex=True).__geo_interface__['coordinates'])[0:-1]))), StringType())
+udf = UserDefinedFunction(lambda x: str(max_dist(loads(x,hex=True).__geo_interface__['coordinates'])), StringType())
+max_dis = track_trajectory.withColumn('trajectory', udf(F.col('trajectory')))
