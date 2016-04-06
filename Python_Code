@@ -1,25 +1,4 @@
-# all these below based on Spark
-#track_subset.withColumn('dt2', F.date_format('dt', 'yyyy-MM-dd HH:mm:ss')).select('dt','dt2').toPandas().head()
-track_subset=track_subset.withColumn('dt', F.date_format('dt', 'yyyy-MM-dd HH:mm:ss'))# transform the time into seconds
-#track_subset.show(3)
-weather_table = "birds.weather"
-weather = hc.read.table(weather_table)
-weather_subset = (weather.where("dt > '2015-07-01 00:00:00'")
-                     .where("dt < '2015-07-01 23:59:59'")).persist()
-weather_subset=weather_subset.withColumn('dt', F.date_format('dt', 'yyyy-MM-dd HH:mm:ss'))# transform the time into seconds(not show half seconds)
-weather_subset.show(3)
-weatherSubset=weather_subset.dropDuplicates(['dt'])
-weatherSubset=weatherSubset.orderBy('dt')
-weatherSubset.count() # drop duplication
-while weatherSubset.count()<86399:
-    weatherSubset_dup=weatherSubset.withColumn('dt', (weatherSubset.dt.astype('timestamp') + F.expr("INTERVAL 1 SECOND")).astype('string'))
-    weatherSubset=weatherSubset_dup.unionAll(weatherSubset).dropDuplicates(['dt']).orderBy('dt')
-# copy the information and plus 1 seconds on the original one to extend the whole 24hours
-# combine two dataframe into one and drop duplication and order it 
-weatherSubset.count() # loop is terrible slow
-
-
-
+# load the package 
 import findspark
 findspark.init('/data/spark-1.6.0-bin-hadoop2.6')
 from pyspark import SparkContext, HiveContext
