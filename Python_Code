@@ -13,23 +13,29 @@ sc = SparkContext()
 hc = HiveContext(sc)
 
 track_table = "birds.track"
-track = hc.read.table(track_table) # input track table which contanis trajectory
+track = hc.read.table(track_table) 
+# input track table which contanis trajectory
 track = track.select('id','classification_id','species_id','distance_travelled','score')
+# only select part of features
 
 trackestimate_table = "birds.trackestimate"
-trackestimate = hc.read.table(trackestimate_table)  # input trackestimate table which contanis each location
+trackestimate = hc.read.table(trackestimate_table)  
+# input trackestimate table which contanis each location
 
 track_subset = (trackestimate.where("dt > '2015-07-01 00:00:00'")
                      .where("dt < '2015-07-01 23:59:59'")).persist()
                      #.where("classification_id != 10")
                      #.where("classification_id != 5")
                      #.where("classification_id != 1"))
-                     #.where("distance_travelled < 10000")) # select one day data
+                     #.where("distance_travelled < 10000")) 
+# select one day data based on the reqiurements
                      
 start_time = '2015-07-01 00:00:01'
 end_time = '2015-07-02 00:00:00'
-all_times = pd.date_range(start_time,end_time, freq='s', closed='left')# generate one day value in each seconds
+all_times = pd.date_range(start_time,end_time, freq='s', closed='left')
+# generate one day value in each seconds
 all_times = hc.createDataFrame(pd.DataFrame((all_times).astype(str), columns=['ts']))
+# generate a dataframe
 all_times.head(10) # dataframe of each seconds
 all_times.count()
 
@@ -40,7 +46,7 @@ weather.head(10)
 
 weather_sec = weather.withColumn('ts', F.date_format('dt', 'yyyy-MM-dd HH:mm:ss'))['dt','ts']
 weather_sec.show(10)
-# add a new column with new time format 
+# add a new column with new time format and select the two features
 
 ts = None
 for delta_sec in range(31): 
@@ -106,21 +112,71 @@ width =  (int(np.ceil(width0*10)))/10.
 
 
 # the potential extended distance
-from pyspark import SparkContext
-from pyspark.sql.functions import UserDefinedFunction
-from pyspark.sql.functions import asc
-from pyspark.sql.types import StringType
-from shapely.wkb import loads
-from shapely import wkt
+#from pyspark.sql.functions import UserDefinedFunction
+#from pyspark.sql.types import StringType
+#from shapely.wkb import loads
+#from shapely import wkt
+#track_table = "birds.track"
+#track = hc.read.table(track_table) # input track table which contanis trajectory
+#track_trajectory = track.select('trajectory')
+#def distance(a):
+#    return ((a[0][0]*111.321*cos(a[0][1]*np.pi/180) - (a[1][0]*111.321*cos(a[1][1]*np.pi/180)))**2 
+#             + ((a[0][1] - a[1][1])*111)**2)**0.5
+#udf = UserDefinedFunction(lambda x: str(loads(x,hex=True).__geo_interface__['coordinates']), StringType())
+#udf = UserDefinedFunction(lambda x: str(loads(x,hex=True)), StringType())
+#a = track_trajectory.withColumn('text', udf(F.col('trajectory')))
+
+
+# the potential extended distance
 track_table = "birds.track"
-track = hc.read.table(track_table) # input track table which contanis trajectory
-track_trajectory = track.select('trajectory')
+track = hc.read.table(track_table).where("classification_id != 1")# input track table which contanis trajectory
+
 
 def max_dist(b):
     return max(((np.array(b)[1:,0]*111.321*np.cos(np.array(b)[1:,1]*np.pi/180) 
                  - b[0][0]*111.321*np.cos(b[0][1]*np.pi/180))**2 + 
                 ((np.array(b)[1:,1] - b[0][1])*111)**2)**.5)
-# udf = UserDefinedFunction(lambda x: max(map(distance,zip(str(loads(x,hex=True).__geo_interface__['coordinates'])[1:],
-#                                                          str(loads(x,hex=True).__geo_interface__['coordinates'])[0:-1]))), StringType())
+
 udf = UserDefinedFunction(lambda x: str(max_dist(loads(x,hex=True).__geo_interface__['coordinates'])), StringType())
-max_dis = track_trajectory.withColumn('trajectory', udf(F.col('trajectory')))
+#udf = UserDefinedFunction(lambda x: max_dist(loads(x,hex=True).__geo_interface__['coordinates']), DoubleType())
+
+track_trajectory = (track
+                       .select('trajectory')
+                       .dropna()
+                       .withColumn('max_dist', udf(F.col('trajectory')))
+                       .withColumn('max_dist', F.col('max_dist').astype('float'))
+                       .select('max_dist')
+          )
+
+
+trajectoy_count = track_trajectory.count()
+print trajectoy_count
+
+
+nth_percentile = (track_trajectory
+        .sort(track_trajectory.max_dist.desc())
+        .limit(int((1-0.99) * count))
+        .sort(track_trajectory.max_dist.asc())
+        .first()
+)
+
+print nth_percentile
+
+
+temp.orderBy('cast_trajectoy').first()
+
+
+lat_det = maxdist/111
+log_det = maxdist/(np.cos(l_lat*np.pi/180)*111.321)
+bound_x = c(l_lon-log.det,l_lat-lat.det)
+bound_y = c(r_lon+log.det,r_lat+lat.det)
+n= 10
+
+from shapely.wkb import loads
+from pyspark.sql.functions import UserDefinedFunction
+from pyspark.sql.types import StringType
+
+udf = UserDefinedFunction(lambda x: str(loads(x,hex=True).__geo_interface__['coordinates'][0])+', '+
+                                        str(loads(x,hex=True).__geo_interface__['coordinates'][1]), StringType())
+
+a = track_subset.limit(10).withColumn('position_text', udf(F.col('position')))
