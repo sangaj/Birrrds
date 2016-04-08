@@ -1,4 +1,3 @@
-# load the package 
 import findspark
 findspark.init('/data/spark-1.6.0-bin-hadoop2.6')
 from pyspark import SparkContext, HiveContext
@@ -7,46 +6,34 @@ from pyspark.sql import Window as w
 %matplotlib inline
 import seaborn as sns
 import pandas as pd
+import numpy as np
+import math
+from pyspark.sql.functions import UserDefinedFunction
+from pyspark.sql.types import StringType, DoubleType, IntegerType
+from shapely.wkb import loads
+from shapely import wkt
+## package installed 
 
 # load Spark and HiveContext
 sc = SparkContext()
 hc = HiveContext(sc)
 
-track_table = "birds.track"
-track = hc.read.table(track_table) 
-# input track table which contanis trajectory
-track = track.select('id','classification_id','species_id','distance_travelled','score')
-# only select part of features
+# At first, dealing with weather data to fill each seconds into the whole dataset. 
 
-trackestimate_table = "birds.trackestimate"
-trackestimate = hc.read.table(trackestimate_table)  
-# input trackestimate table which contanis each location
-
-track_subset = (trackestimate.where("dt > '2015-07-01 00:00:00'")
-                     .where("dt < '2015-07-01 23:59:59'")).persist()
-                     #.where("classification_id != 10")
-                     #.where("classification_id != 5")
-                     #.where("classification_id != 1"))
-                     #.where("distance_travelled < 10000")) 
-# select one day data based on the reqiurements
-                     
-start_time = '2015-07-01 00:00:01'
+start_time = '2015-07-01 00:00:00' 
 end_time = '2015-07-02 00:00:00'
 all_times = pd.date_range(start_time,end_time, freq='s', closed='left')
-# generate one day value in each seconds
-all_times = hc.createDataFrame(pd.DataFrame((all_times).astype(str), columns=['ts']))
-# generate a dataframe
-all_times.head(10) # dataframe of each seconds
-all_times.count()
+all_times = hc.createDataFrame(pd.DataFrame((all_times).astype(str), columns=['ts'])) 
+# generate one days timedata by seconds and stored a dataframe into all_times.
+#all_times.head(10) 
+#all_times.count()
 
 weather_table = "birds.weather"
-weather = hc.read.table(weather_table)
-weather.persist() # read  weather data
-weather.head(10)
+weather = hc.read.table(weather_table).persist() # read weather data
+#weather.head(10)
 
 weather_sec = weather.withColumn('ts', F.date_format('dt', 'yyyy-MM-dd HH:mm:ss'))['dt','ts']
-weather_sec.show(10)
-# add a new column with new time format and select the two features
+# add a new column 'ts' with new time format in order to drop the half seconds in the original data and extract this two column
 
 ts = None
 for delta_sec in range(31): 
@@ -54,51 +41,101 @@ for delta_sec in range(31):
         ts = hc.createDataFrame(pd.DataFrame((all_times+(24*60*60)*delta_sec).astype(str), columns=['ts']))
     else:
         ts = ts.unionAll(hc.createDataFrame(pd.DataFrame((all_times+(24*60*60)*delta_sec).astype(str), columns=['ts'])))
-ts.head(100) # generate the time in one month
+# ts.head(100) 
+# generate one month time in a for loop 
 
 #weather_full = ts.join(weather_sec, on=weather_sec.ts==ts.ts, how='left').drop(weather_sec.ts)
 weather_full = all_times.join(weather_sec, on=weather_sec.ts==all_times.ts, how='left').drop(weather_sec.ts)
-weather_full = weather_full.orderBy('ts').dropDuplicates(['ts'])# join two tables one is with all seconds, one is weather data
-weather_full.count()
+weather_full = weather_full.orderBy('ts').dropDuplicates(['ts'])
+#weather_full.count()
+# join two tables, one is with all seconds, one is weather data in order to get the weather information by each seconds
 
+# since there are misssing data, we need to fill in it by its previous weather information, but the chanllenge is the 
+# misssing interval is flexible 
 window = w.partitionBy().orderBy('ts')   
 lag_windows = [F.lag(F.col('dt'),count=lag).over(window) for lag in range(1,10)] 
-# fill in the data for interval from 1 to 10,interval depends on the data,in some day the interval time is rather bi
-#?? function # notice the interval time vary from 1 to .... on different days
+# create the function to fill in the data for interval from 1 to 10,interval depends on the data,in some day the interval time is rather bi
+# function # notice the interval time vary from 1 to .... on different days
+
 
 weather_filld = (weather_full
-    .withColumn('dt_new',F.coalesce(*lag_windows))
-    .withColumn('dt', F.when(F.col('dt').isNull(), F.col('dt_new')).otherwise(F.col('dt'))))['ts','dt']
-weather_filld.head(100)
+                .withColumn('dt_new',F.coalesce(*lag_windows))
+                .withColumn('dt', F.when(F.col('dt').isNull(), F.col('dt_new')).otherwise(F.col('dt'))))['ts','dt']
+#weather_filld.head(100)
+# fill the data in terms of the time 
 
-full_data= weather_filld.join(weather, on=weather.dt==weather_filld.dt, how='left').drop(weather.dt).drop(weather_filld.dt).drop(weather.id)
-full_data.count()
+weather_fulldata= (weather_filld
+                .join(weather, on=weather.dt==weather_filld.dt, how='left')
+                .drop(weather.dt)
+                .drop(weather_filld.dt)
+                .drop(weather.id)
+            )
+#full_data.count()
+# fill the data with all information
 
 df = weather_filld.filter(weather_filld.dt.isNull()).toPandas()
-
 df.groupby(pd.to_datetime(df.ts).dt.date).count()
-
 ts.filter(ts.ts<'2015-07-01 01:20:55').filter(ts.ts>'2015-07-01 01:20:49').head(100)
+# check the data, some days have large interval of missing data , dropping it may be a good idea.
+
+trackestimate_table = "birds.trackestimate"
+trackestimate = hc.read.table(trackestimate_table)  
+# read trackestimate table which contanis each location
+
+
+track_subset = (trackestimate.where("dt > '2015-07-01 00:00:00'")
+                     .where("dt < '2015-07-01 23:59:59'")).persist()
+                     #.where("classification_id != 10")
+                     #.where("classification_id != 5")
+                     #.where("classification_id != 1"))
+                     #.where("distance_travelled < 10000")) 
+# select one day data 
+
 
 trackestimate_subset = track_subset.withColumn('dt', F.date_format('dt', 'yyyy-MM-dd HH:mm:ss'))
-trackestimate_subset.count()
+# transform time format in order to drop the half seconds in the original data and extract this two column( the same as the weather table)
+udf_x = UserDefinedFunction(lambda x: str(loads(x,hex=True).__geo_interface__['coordinates'][0]), StringType())
+# develop a function to get the coordinates from specific value(longitude)
+udf_y = UserDefinedFunction(lambda x: str(loads(x,hex=True).__geo_interface__['coordinates'][1]), StringType())
+# develop a function to get the coordinates from specific value(latitude)
+trackestimate_subset_coord=trackestimate_subset.withColumn('position_x', udf_x(F.col('position')))
+trackestimate_subset_coord=trackestimate_subset_coord.withColumn('position_y', udf_y(F.col('position')))
+# transform it into position_x(longitude) and position_y(latitude) in terms of the function above 
+trackestimate_subset_coord=trackestimate_subset_coord.withColumn('position_x',F.col('position_x').astype('float'))
+trackestimate_subset_coord=trackestimate_subset_coord.withColumn('position_y',F.col('position_y').astype('float'))
+# transform the type from string to float
 
-data = trackestimate_subset.join(full_data,on=trackestimate_subset.dt==full_data.ts,how='left').drop(full_data.ts).persist()
-data.count()
+#trackestimate_subset.count()
+
+
+data_join = (trackestimate_subset_coord
+              .join(weather_fulldata,on=trackestimate_subset_coord.dt==weather_fulldata.ts,how='left')
+              .drop(weather_fulldata.ts)
+              .drop(weather_fulldata.dewpoint)
+              .drop(weather_fulldata.relativehumidity)
+              .drop(trackestimate_subset_coord.position)
+              .persist()
+            )
 
 #data.filter(data.relativehumidity.isNull()).count() - data.count() # check if all NULL
 #data.filter(data.dewpoint.isNull()).count() - data.count() # check if all NULL
-data=data.drop(data.dewpoint).drop(data.relativehumidity)
-data=data.withColumn('dt', F.date_format('dt', 'yyyy-MM-dd HH:mm:ss'))
-data.count()
-
-data = data.join(track,on=track.id==data.track_id).drop(track.id)
-data.head(10)
+#join weather full data and trackeastimate data in terms of the timestamp and drop two features which didn't contain any value
+# so now we get most of the information at each seconds
 
 
+track_table = "birds.track"
+track = hc.read.table(track_table) 
+# read track table which contanis trajectory to get some additional information
+track = track.select('id','classification_id','species_id','distance_travelled','score')
 
-# the fixed area 
-import numpy as np
+
+data_join = (data_join
+        .join(track,on=track.id==data_join.track_id)
+        .drop(track.id))
+# join data and track in terms of the id to get more inforamtion 
+
+
+# determine the fixed area 
 l_lon = 4.705
 r_lat = 52.368
 r_lon = 4.815
@@ -109,13 +146,11 @@ length0 =  r_lon*111.699 * np.cos(r_lat * np.pi/180) - l_lon*111.699 * np.cos(r_
 length = (int(np.ceil(length0*10)))/10.
 width0 =  r_lat*110.574 - l_lat*110.574
 width =  (int(np.ceil(width0*10)))/10.
+# the area is from the images of bird control team and get the coordinates from google maps approximately and calculate the 
+# length and width
 
 
 # the potential extended distance
-#from pyspark.sql.functions import UserDefinedFunction
-#from pyspark.sql.types import StringType
-#from shapely.wkb import loads
-#from shapely import wkt
 #track_table = "birds.track"
 #track = hc.read.table(track_table) # input track table which contanis trajectory
 #track_trajectory = track.select('trajectory')
@@ -129,7 +164,8 @@ width =  (int(np.ceil(width0*10)))/10.
 
 # the potential extended distance
 track_table = "birds.track"
-track = hc.read.table(track_table).where("classification_id != 1")# input track table which contanis trajectory
+track = hc.read.table(track_table).where("classification_id != 1")
+# read thetrack table which contanis trajectory and drop the flight trajectory
 
 
 def max_dist(b):
@@ -137,8 +173,11 @@ def max_dist(b):
                  - b[0][0]*111.321*np.cos(b[0][1]*np.pi/180))**2 + 
                 ((np.array(b)[1:,1] - b[0][1])*111)**2)**.5)
 
+# define the function of calculating the maximum direct distance between two coordinates  
+
 udf = UserDefinedFunction(lambda x: str(max_dist(loads(x,hex=True).__geo_interface__['coordinates'])), StringType())
 #udf = UserDefinedFunction(lambda x: max_dist(loads(x,hex=True).__geo_interface__['coordinates']), DoubleType())
+# develop the function to apply on each row
 
 track_trajectory = (track
                        .select('trajectory')
@@ -147,36 +186,99 @@ track_trajectory = (track
                        .withColumn('max_dist', F.col('max_dist').astype('float'))
                        .select('max_dist')
           )
+# get the maximum distance from each trajectory and transform it into proper type.
 
-
-trajectoy_count = track_trajectory.count()
-print trajectoy_count
-
-
-nth_percentile = (track_trajectory
+nth_percentile = math.ceil(track_trajectory
         .sort(track_trajectory.max_dist.desc())
-        .limit(int((1-0.99) * count))
+        .limit(int((1-0.99) * track_trajectory.count()))
         .sort(track_trajectory.max_dist.asc())
-        .first()
+        .first()[0]
 )
-
-print nth_percentile
-
-
-temp.orderBy('cast_trajectoy').first()
+# calculate the 99% largest distance and to extend the exist area in terms of this value
+# since some of insane geese could produce crazy long distance, we set 99% as threshold
 
 
-lat_det = maxdist/111
-log_det = maxdist/(np.cos(l_lat*np.pi/180)*111.321)
-bound_x = c(l_lon-log.det,l_lat-lat.det)
-bound_y = c(r_lon+log.det,r_lat+lat.det)
-n= 10
+print nth_percentile 
 
-from shapely.wkb import loads
-from pyspark.sql.functions import UserDefinedFunction
-from pyspark.sql.types import StringType
 
-udf = UserDefinedFunction(lambda x: str(loads(x,hex=True).__geo_interface__['coordinates'][0])+', '+
-                                        str(loads(x,hex=True).__geo_interface__['coordinates'][1]), StringType())
+lat_det = nth_percentile/111
+lon_det = nth_percentile/(np.cos(l_lat*np.pi/180)*111.321)
+bound_x = [(l_lon-lon_det,l_lat-lat_det)]
+bound_y = [(r_lon+lon_det,r_lat+lat_det)]
+# calculate the whole area to determine the grid
+n= 10 
+# determine number of cells in each dimension( this could be shifted in terms of some conditions)
 
-a = track_subset.limit(10).withColumn('position_text', udf(F.col('position')))
+
+index_cells = pd.RangeIndex(1,n+1,1)
+#index_cells = hc.createDataFrame(pd.DataFrame((index_cells), columns=['index']))
+x_cells=pd.qcut(([l_lon-lon_det,r_lon+lon_det]),n,retbins=True)[1:]
+y_cells=pd.qcut(([l_lat-lat_det,r_lat+lat_det]),n,retbins=True)[1:]
+# determine the bound of each cells and the index notice it calculate through pandas
+
+bins_x=np.array(x_cells).tolist()[0]
+bins_y=np.array(y_cells).tolist()[0]
+# get the bound value
+interval_lon = (r_lon+lon_det-(l_lon-lon_det))/n
+interval_lat = (r_lat+lat_det-(l_lat-lat_det))/n
+# get the interval value of each cells
+min_lon = l_lon-lon_det
+min_lat = l_lat-lat_det
+
+
+data= (data_join.filter(data_join.position_x > bound_x[0][0])
+                .filter(data_join.position_x < bound_y[0][0])
+                .filter(data_join.position_y > bound_x[0][1])
+                .filter(data_join.position_y < bound_y[0][1])).persist()
+# drop those location out of the area
+
+
+data_x = data.withColumn('x_categories', F.ceil((F.col('position_x') - min_lon)/interval_lon))
+data = data_x.withColumn('y_categories', F.ceil((F.col('position_y') - min_lat)/interval_lat))
+data = data.fillna(0)
+# assign those location( longitude and latitude) into a index in terms of the grid number set before
+
+
+time_interval = 30
+# set the time interval( this could be changed by other conditions)
+start_timestep = 1435708800 - 7200 
+# 2015-07-01 00:00:00 2 hours difference from the utc time zone
+
+data = (data
+        .withColumn('timestep', F.ceil((F.unix_timestamp('dt')-start_timestep)/time_interval))
+        )
+# assign the each seconds into a time index in terms of the time interval
+
+#udf_lon = UserDefinedFunction(lambda x: round((x-(l_lon-lon_det))/interval_lon + 0.5), DoubleType())
+#udf_lat = UserDefinedFunction(lambda x: round((x-(l_lat-lat_det))/interval_lat + 0.5), DoubleType())
+#data_x= data.withColumn('x_categories',udf_lon(F.col('position_x')))
+#data = data_x.withColumn('y_categories',udf_lat(F.col('position_y')))
+# assign assign each location into corresponding index value #remark not fancy function,simple calculation could do it directly  
+# assign na value into 0
+
+
+data_count=data.groupBy('x_categories', 'y_categories', 'timestep').count()
+data_mean=data.groupBy('x_categories', 'y_categories', 'timestep').mean('position_x','position_y',
+                                                              'velocity','airspeed',
+                                                              'heading','heading_vertical',
+                                                             'peak_mass','mass','mass_correction',
+                                                             'barometricpressure','airtemperature',
+                                                             'winddirectiontrue','winddirectionmagnetic',
+                                                             'windspeed','distance_travelled','score')
+
+# group by the condition and calculate the mean and count the number of location in each cells 
+
+cond = [data_count.x_categories == data_mean.x_categories, 
+        data_count.y_categories == data_mean.y_categories,
+        data_count.timestep == data_mean.timestep]
+# set the join condition
+data_grid = (data_mean.join(data_count, cond, 'inner')
+                 .drop(data_mean.timestep)
+                 .drop(data_mean.y_categories)
+                 .drop(data_mean.x_categories)
+             )
+data_grid = data_grid.orderBy('timestep','x_categories','y_categories')
+
+
+data_grid.head()
+
