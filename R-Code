@@ -333,3 +333,241 @@ grid <- GridTopology(cellcentre.offset =  offset, cellsize = size, cells.dim = d
 
 
 
+
+
+
+### test
+
+library(maptools)
+library(spdep)
+nc_file <- system.file("shapes/sids.shp", package = "maptools")[1]
+llCRS <- CRS("+proj=longlat +datum=NAD27")
+nc <- readShapePoly(nc_file, ID = "FIPSNO", proj4string = llCRS)
+rn <- sapply(slot(nc, "polygons"), function(x) slot(x,  "ID"))
+gal_file <- system.file("etc/weights/ncCR85.gal", package = "spdep")[1]
+ncCR85 <- read.gal(gal_file, region.id = rn)
+nc$Observed <- nc$SID74
+nc$Population <- nc$BIR74
+r <- sum(nc$Observed)/sum(nc$Population)
+nc$Expected <- nc$Population * r
+nc$SMR <- nc$Observed/nc$Expected
+library(DCluster)
+eb <- empbaysmooth(nc$Observed, nc$Expected)
+nc$EBPG <- eb$smthrr
+ebln <- lognormalEB(nc$Observed, nc$Expected)
+nc$EBLN <- exp(ebln$smthrr)
+nc$EBMrshloc <- EBlocal(nc$Observed, nc$Expected, ncCR85)$est
+
+
+library(gstat)
+demo(pcb)
+
+
+
+library(SpatioTemporal)
+library(plotrix)
+library(maps)
+data(mesa.data.raw, package="SpatioTemporal")
+str(mesa.data.raw,1)
+
+sp <- cbind(x = c(0, 0, 1), y = c(0, 1, 1))
+row.names(sp) <- paste("point", 1:nrow(sp), sep = "")
+library("sp")
+sp <- SpatialPoints(sp)
+time <- as.POSIXct("2010-08-05", tz = "GMT") + 3600 * (10:13)
+m <- c(10, 20, 30)
+values <- rnorm(length(sp) * length(time), mean = rep(m, 4))
+IDs <- paste("ID", 1:length(values), sep = "_")
+mydata <- data.frame(values = signif(values, 3), ID = IDs)
+library("spacetime")
+stfdf <- STFDF(sp, time, data = mydata)
+stfdf <- STFDF(sp, time, mydata, time + 60)
+xs1 <- as(stfdf, "Spatial")
+xs1
+x <- as(stfdf, "STIDF")
+xs2 <- as(x, "Spatial")
+xs2
+
+library("maptools")
+fname <- system.file("shapes/sids.shp", package = "maptools")[1]
+nc <- readShapePoly(fname, proj4string = CRS("+proj=longlat +datum=NAD27"))
+nc
+time <- as.POSIXct(strptime(c("1974-07-01", "1979-07-01"), "%Y-%m-%d"),tz = "GMT")
+endTime <- as.POSIXct(strptime(c("1978-06-30", "1984-06-30"), "%Y-%m-%d"), tz = "GMT")
+data <-  data.frame( BIR = c(nc$BIR74, nc$BIR79),NWBIR = c(nc$NWBIR74, nc$NWBIR79),SID = c(nc$SID74, nc$SID79))
+nct <- STFDF(sp = as(nc, "SpatialPolygons"), time, data, endTime)
+
+library("maptools")
+fname <- system.file("shapes/sids.shp", package = "maptools")[1]
+nc <- readShapePoly(fname,proj4string = CRS("+proj=longlat +datum=NAD27"))
+
+
+
+
+library("maps")
+states.m <- map("state", plot = FALSE, fill = TRUE)
+IDs <- sapply(strsplit(states.m$names, ":"), function(x) x[1])
+library("maptools")
+states <- map2SpatialPolygons(states.m, IDs = IDs)
+yrs <- 1970:1986
+time <- as.POSIXct(paste(yrs, "-01-01", sep = ""), tz = "GMT")
+library("plm")
+data("Produc")
+Produc.st <- STFDF(states[-8], time, Produc[order(Produc[2], Produc[1]),])
+library("RColorBrewer")
+stplot(Produc.st[, , "unemp"], yrs, col.regions = brewer.pal(9, "YlOrRd"),cuts = 9)
+zz <- plm(log(gsp) ~ log(pcap) + log(pc) + log(emp) + unemp,data = as.data.frame(Produc.st), index = c("state", "year"))
+
+
+library(data.table)
+library(lfe)
+library(foreign)
+dta_file <- "I:/Desktop/new_testspatial.dta"
+DTA <-data.table(read.dta(dta_file))
+setnames(DTA, c("latitude", "longitude"), c("lat", "lon"))
+m <-felm(EmpClean00 ~HDD -1 |year +FIPS |0 |lat +lon,
+         data = DTA[!is.na(EmpClean00)], keepCX = TRUE)
+
+## have a try
+library(plyr)
+library(dplyr)
+library(plm)
+library(MASS)
+library(reshape2)
+datatest <- read.table("I:/Desktop/gridinR.csv",header=T,sep=",")
+datatest <- mutate(datatest, position=paste(datatest$x_level,datatest$y_level,sep=""))
+zz <- plm(count ~ mass  + winddirectiontrue  + score,data = datatest, 
+          index = c("timestep", "position"),family=poisson(link=log))
+### very low R-squared
+
+
+datatest <- read.table("I:/Desktop/grid_space .csv",header=T,sep=",")
+data.melt <- melt(datatest,id=1)
+data.melt<- data.melt[order(data.melt$timestep),]
+data.melt[is.na(data.melt)] <- 0
+x.easting <- 1:10
+x.northing <- 1:10
+Grid <- expand.grid(x.easting, x.northing)
+GRID <- mutate(Grid,var=paste('X',Var1,Var2,sep=""))
+N.grid <- 0:1000
+GRIDNEW <- expand.grid(N.grid, GRID$var)
+names(GRIDNEW) <- c("timestep","variable")
+daaaata <- join(GRIDNEW, data.melt, by = c("timestep","variable"))
+daaaata <- daaaata[order(daaaata$timestep),]
+daaaata [is.na(daaaata)] <- 0
+
+
+
+x.easting <- 1:10
+x.northing <- 1:10
+Grid <- expand.grid(x.easting, x.northing)
+K <- nrow(Grid)
+N <- 44641
+N.all <- N * K
+
+W <-array(0, c(K,K))
+for(i in 1:K)
+{
+for(j in 1:K)
+    {
+      temp <- (Grid[i,1] - Grid[j,1])^2 + (Grid[i,2] - Grid[j,2])^2
+      if(temp==1) W[i,j] <- 1
+     }
+}
+
+D <-array(0, c(N,N))
+for(i in 1:N)
+   {
+     for(j in 1:N)
+       {
+         if(abs((i-j))==1) D[i,j] <- 1
+         }
+     }
+Q.W <- 0.99 * (diag(apply(W, 2, sum)) - W) + 0.01 * diag(rep(1,K))
+Q.W.inv <- solve(Q.W)
+phi <- mvrnorm(n=1, mu=rep(0,K), Sigma=(0.01 * Q.W.inv))
+Q.D <- 0.99 * (diag(apply(D, 2, sum)) - D) + 0.01 * diag(rep(1,N))
+Q.D.inv <- solve(Q.D)
+delta <- mvrnorm(n=1, mu=rep(0,N), Sigma=(0.01 * Q.D.inv))
+phi.long <- rep(phi, N)
+delta.long <- kronecker(delta, rep(1,K))
+LP <- 4 + phi.long + delta.long
+mean <- exp(LP)
+Y <- rpois(n=N.all, lambda=mean)
+
+library(CARBayesST)
+model <- ST.CARanova(formula=daaaata$value~1, family="poisson", W=W, interaction=FALSE,burnin=5000, n.sample=30000, thin=10)
+
+
+library(spatcounts)
+
+
+datatest <- read.table("I:/Desktop/grid_space .csv",header=T,sep=",")
+data.melt <- melt(datatest,id=1)
+data.melt<- data.melt[order(data.melt$timestep),]
+data.melt[is.na(data.melt)] <- 0
+temple <- cbind(sim.nmat,GRID)[,c(1,9)]
+names(temple) <- c("VAR","variable")
+join <- join(data.melt, temple, by="variable")
+poi <- est.sc(sim.Yin, ~ sim.fm.X[,1], data.melt$VAR,model="Poi", sim.gmat, sim.nmat, totalit=10)
+sim.Yin <- as.data.frame(data.melt$value)
+sim.fm.X <- as.data.frame(data.melt$timestep)
+
+
+
+
+
+
+
+#--------------------------------------------------------#
+gridspace <- read.table("I:/Desktop/grid8_space0715.csv",header=T,sep=",")
+library(plyr)
+library(dplyr)
+grid.subset <- alply(gridspace[,-1],1)
+listmatrix <- lapply(grid.subset, function(x) matrix(x,nrow=8,byrow=TRUE))
+
+# location 22
+ transpose <-  matrix(unlist(lapply(listmatrix, function(x) unlist(x[1:3,1:3]))),ncol=9,byrow=TRUE)
+ 
+ trans.1 <- rbind(rep(0,9),transpose[-nrow(transpose),])
+ trans.2 <- rbind(rep(0,9),trans.1[-nrow(trans.1),])
+ loc22 <- cbind(transpose[,5],trans.1,trans.2)[-c(1:2),]
+ 
+# loop
+ 
+ 
+names <- c("loc22","loc23","loc24","loc25","loc26","loc27",
+            "loc32","loc33","loc34","loc35","loc36","loc37",
+            "loc42","loc43","loc44","loc45","loc46","loc47",
+            "loc52","loc53","loc54","loc55","loc56","loc57",
+            "loc62","loc63","loc64","loc65","loc66","loc67",
+            "loc72","loc73","loc74","loc75","loc76","loc77")
+func <- function(x) {
+ mat <- matrix(unlist(x),8,8)
+ w <-  which(mat==mat, arr.ind=TRUE)
+ d <- as.matrix(dist(w, "maximum", diag=TRUE, upper=TRUE))
+ d[d==0]=1
+ a <- apply(d, 1, function(i) mat[i == 1] )
+ length <- lapply(a,length) == 9
+ b <- a[length]
+ names(b) <- names
+ b
+ }
+listt <-lapply(listmatrix, func)
+
+unlistdf <- ldply(listt, function(x){
+  df <- ldply(x, function(z) as.data.frame(matrix(z,ncol=9,byrow=T)))
+  names(df)[1] <- "location"; 
+  df
+})
+
+inttime <- 2
+pretime1 <- rbind(matrix(0,ncol=9,nrow=36*1),unlistdf[c(1:(nrow(unlistdf)-36*1)),-c(1:2)])
+pretime2 <- rbind(matrix(0,ncol=9,nrow=36*2),unlistdf[c(1:(nrow(unlistdf)-36*2)),-c(1:2)])
+df <- cbind(unlistdf[,c(1,2,7)],pretime1,pretime2)
+df <- df[order(df$location),]
+colnames <- c("ts","location","Obs",
+              "lt1","lm1","lb1","mt1","mm1","mb1","rt1","rm1","rb1",
+              "lt2","lm2","lb2","mt2","mm2","mb2","rt2","rm2","rb2")
+colnames(df) <- colnames
+dframe <- filter(df,ts>2)
