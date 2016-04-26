@@ -1,4 +1,5 @@
 
+
 # Checking if packages needed are installed otherwise install them:
 if (! require("ggmap")) {
   install.packages("ggmap")
@@ -520,22 +521,12 @@ sim.fm.X <- as.data.frame(data.melt$timestep)
 
 
 #--------------------------------------------------------#
+# analysis
 gridspace <- read.table("I:/Desktop/grid8_space0715.csv",header=T,sep=",")
 library(plyr)
 library(dplyr)
 grid.subset <- alply(gridspace[,-1],1)
 listmatrix <- lapply(grid.subset, function(x) matrix(x,nrow=8,byrow=TRUE))
-
-# location 22
- transpose <-  matrix(unlist(lapply(listmatrix, function(x) unlist(x[1:3,1:3]))),ncol=9,byrow=TRUE)
- 
- trans.1 <- rbind(rep(0,9),transpose[-nrow(transpose),])
- trans.2 <- rbind(rep(0,9),trans.1[-nrow(trans.1),])
- loc22 <- cbind(transpose[,5],trans.1,trans.2)[-c(1:2),]
- 
-# loop
- 
- 
 names <- c("loc22","loc23","loc24","loc25","loc26","loc27",
             "loc32","loc33","loc34","loc35","loc36","loc37",
             "loc42","loc43","loc44","loc45","loc46","loc47",
@@ -561,7 +552,6 @@ unlistdf <- ldply(listt, function(x){
   df
 })
 
-inttime <- 2
 pretime1 <- rbind(matrix(0,ncol=9,nrow=36*1),unlistdf[c(1:(nrow(unlistdf)-36*1)),-c(1:2)])
 pretime2 <- rbind(matrix(0,ncol=9,nrow=36*2),unlistdf[c(1:(nrow(unlistdf)-36*2)),-c(1:2)])
 df <- cbind(unlistdf[,c(1,2,7)],pretime1,pretime2)
@@ -571,3 +561,129 @@ colnames <- c("ts","location","Obs",
               "lt2","lm2","lb2","mt2","mm2","mb2","rt2","rm2","rb2")
 colnames(df) <- colnames
 dframe <- filter(df,ts>2)
+
+sample.size <- floor(0.8*nrow(dframe))
+set.seed(2016)
+train_id <- sample(seq_len(nrow(dframe)),size=sample.size)
+train <- dframe[train_id,]
+test <- dframe[-train_id,]
+
+
+## glm poisson 
+memory.limit(size=10000)
+m1 <- glm(Obs ~ location+lt1+lm1+lb1+mt1+mm1+mb1+rt1+rm1+rb1+lt2+lm2+lb2+mt2+mm2+mb2+rt2+rm2+rb2,family="poisson", data=train)
+m2 <- glm(Obs ~ lt1+lm1+lb1+mt1+mm1+mb1+rt1+rm1+rb1+lt2+lm2+lb2+mt2+mm2+mb2+rt2+rm2+rb2,family="poisson", data=train)
+
+library(boot)
+cv.glm1 <- cv.glm(train, m1, K=10)
+cv.glm2 <- cv.glm(train, m2, K=10)
+mse.min1 <-cv.glm1$delta[2] 
+mse.min2 <-cv.glm2$delta[2] 
+# with location is better
+
+#prediction
+x <- train[,c(-1,-3)]
+y <- train[,3]
+x1 <- train[,c(-1:-3)]
+
+y.test <- test[,3]
+x.test <- test[,c(-1,-3)]
+
+prediction.glm <- predict(m1,x.test,type="link")
+rmse.glm <- sqrt(mean((y.test-prediction.glm)^2))
+
+
+library(lars)
+library(MASS)
+library(glmnet)
+# ridge 
+set.seed(2016)
+x <- model.matrix(~., x)
+x.test <-model.matrix(~., x.test)
+cv.ridge <- cv.glmnet(x=x,y=y,family="poisson",alpha=0,nfolds=10)
+minlam.ridge <- cv.ridge$lambda.min
+mse.min <- cv.ridge$cvm[cv.ridge$lambda == cv.ridge$lambda.min]
+#prediction error
+prediction.ridge <- predict(cv.ridge,as.matrix(x.test),type="link",s="lambda.min")
+rmse.ridge <- sqrt(mean((y.test-prediction.ridge)^2))
+#103.75
+
+
+# lasso
+set.seed(2016)
+cv.lasso <- cv.glmnet(x=x,y=y,family="poisson",alpha=1,nfolds=10)
+minlam.lasso <- cv.lasso$lambda.min
+mse.min <- cv.lasso$cvm[cv.lasso$lambda == cv.lasso$lambda.min]
+#prediction error
+prediction.lasso <- predict(cv.lasso,as.matrix(x.test),type="link",s="lambda.min")
+rmse.lasso <- sqrt(mean((y.test-prediction.lasso)^2))
+#103.72
+
+# elastic
+set.seed(2016)
+cv.elastic <- cv.glmnet(x=x,y,family="poisson",alpha=0.5,nfolds=10)
+minlam.elastic <- cv.elastic$lambda.min
+mse.min <- cv.elastic$cvm[cv.elastic$lambda == cv.elastic$lambda.min]
+#prediction error
+prediction.elastic <- predict(cv.elastic,as.matrix(x.test),type="link",s="lambda.min")
+rmse.elastic <- sqrt(mean((y.test-prediction.elastic)^2))
+#103.72
+
+# adaptive lasso
+set.seed(2016)
+betals <- solve(t(x)%*%x)%*%t(x)%*%y
+cv.adapl <- cv.glmnet(x=x,y,family="poisson",alpha=0.5,nfolds=10,penalty.factor=1/abs(betals))
+minlam.adapl <- cv.adapl$lambda.min
+mse.min <- cv.adapl$cvm[cv.adapl$lambda == cv.adapl$lambda.min]
+#prediction error
+prediction.adapl <- predict(cv.adapl,as.matrix(x.test),type="link",s="lambda.min")
+rmse.adapl <- sqrt(mean((y.test-prediction.adapl)^2))
+#103.72
+
+# MCP & SCAD
+library(ncvreg)
+set.seed(2016)
+cv.mcp <- cv.ncvreg(X=x,y=y,family="poisson",penalty="MCP",nfolds=10)
+minlam.mcp <- cv.mcp$lambda.min
+mse.min <- min(cv.mcp$cve)
+#prediction error
+prediction.mcp <- predict(cv.mcp,as.matrix(x.test),type="link",lambda=minlam.mcp)
+rmse.mcp <- sqrt(mean((y.test-prediction.mcp)^2))
+
+cv.scad <- cv.ncvreg(X=x,y=y,family="poisson",penalty="SCAD",nfolds=10)
+minlam.scad <- cv.scad$lambda.min
+mse.min <- min(cv.scad$cve)
+#prediction error
+prediction.scad <- predict(cv.scad,as.matrix(x.test),type="link",lambda=minlam.scad)
+rmse.scad <- sqrt(mean((y.test-prediction.scad)^2))
+
+
+
+
+# no bigger difference lasso a little better
+
+
+
+
+
+
+
+
+### PPT trajectory
+
+dataPPT <- read.table("estimate_outputPPT.csv",header=T,sep=",")
+dataPPT[is.na(dataPPT)] <- 0
+subset0 <- subset(dataPPT, !(classification_id %in% c(0,1,5,10)))
+split_subset0 <- split(subset0,subset0$track_id)
+split_subset0_sub <- split_subset0[sapply(split_subset0,function(x) nrow(x)>5)]
+map <- qmap("2132MH",zoom = 12, maptype='toner-lite')
+options(expressions=100000)
+for(i in 1:700){
+  sp_line <- as.data.frame(cbind(split_subset0_sub[[i]]$position_x,
+                                 split_subset0_sub[[i]]$position_y,
+                                 split_subset0_sub[[i]]$classification_id
+                                 ))
+  map <- map + geom_line(data = sp_line,aes(x=V1,y=V2,color=V3), size=1, alpha=0.5) + scale_colour_gradientn(colours=rainbow(4))
+}
+
+print(map)
