@@ -687,3 +687,137 @@ for(i in 1:700){
 }
 
 print(map)
+
+
+
+
+
+
+#####
+# analysis
+gridspace <- read.table("I:/Desktop/grid8_space07hr.csv",header=T,sep=",")
+library(plyr)
+library(dplyr)
+grid.subset <- alply(gridspace[,-1],1)
+listmatrix <- lapply(grid.subset, function(x) matrix(x,nrow=8,byrow=TRUE))
+names <- c("loc22","loc23","loc24","loc25","loc26","loc27",
+            "loc32","loc33","loc34","loc35","loc36","loc37",
+            "loc42","loc43","loc44","loc45","loc46","loc47",
+            "loc52","loc53","loc54","loc55","loc56","loc57",
+            "loc62","loc63","loc64","loc65","loc66","loc67",
+            "loc72","loc73","loc74","loc75","loc76","loc77")
+func <- function(x) {
+ mat <- matrix(unlist(x),8,8)
+ w <-  which(mat==mat, arr.ind=TRUE)
+ d <- as.matrix(dist(w, "maximum", diag=TRUE, upper=TRUE))
+ d[d==0]=1
+ a <- apply(d, 1, function(i) mat[i == 1] )
+ length <- lapply(a,length) == 9
+ b <- a[length]
+ names(b) <- names
+ b
+ }
+listt <-lapply(listmatrix, func)
+
+unlistdf <- ldply(listt, function(x){
+  df <- ldply(x, function(z) as.data.frame(matrix(z,ncol=9,byrow=T)))
+  names(df)[1] <- "location"; 
+  df
+})
+
+pretime1 <- rbind(matrix(0,ncol=9,nrow=36*1),unlistdf[c(1:(nrow(unlistdf)-36*1)),-c(1:2)])
+pretime2 <- rbind(matrix(0,ncol=9,nrow=36*2),unlistdf[c(1:(nrow(unlistdf)-36*2)),-c(1:2)])
+pretime3 <- rbind(matrix(0,ncol=9,nrow=36*3),unlistdf[c(1:(nrow(unlistdf)-36*3)),-c(1:2)])
+pretime4 <- rbind(matrix(0,ncol=9,nrow=36*4),unlistdf[c(1:(nrow(unlistdf)-36*4)),-c(1:2)])
+pretime5 <- rbind(matrix(0,ncol=9,nrow=36*5),unlistdf[c(1:(nrow(unlistdf)-36*5)),-c(1:2)])
+
+df <- cbind(unlistdf[,c(1,2,7)],pretime1,pretime2,pretime3,pretime4,pretime5)
+df <- df[order(df$location),]
+colnames <- c("ts","location","Obs",
+              "lt1","lm1","lb1","mt1","mm1","mb1","rt1","rm1","rb1",
+              "lt2","lm2","lb2","mt2","mm2","mb2","rt2","rm2","rb2",
+              "lt3","lm3","lb3","mt3","mm3","mb3","rt3","rm3","rb3",
+              "lt4","lm4","lb4","mt4","mm4","mb4","rt4","rm4","rb4",
+              "lt5","lm5","lb5","mt5","mm5","mb5","rt5","rm5","rb5")
+colnames(df) <- colnames
+dframe <- df[!df$ts %in% c("1","2","3","4","5"),]
+
+sample.size <- floor(0.8*max(as.numeric(dframe$ts)))
+set.seed(2016)
+train_id <- sample(seq_len(max(as.numeric(dframe$ts))),size=sample.size)
+train <- dframe[dframe$ts %in% train_id,]
+test <- dframe[!dframe$ts %in% train_id,]
+
+
+## glm poisson 
+memory.limit(size=10000)
+m1 <- glm(Obs ~ location+lt1+lm1+lb1+mt1+mm1+mb1+rt1+rm1+rb1+lt2+lm2+lb2+mt2+mm2+mb2+rt2+rm2+rb2,family="poisson", data=train)
+m2 <- glm(Obs ~ lt1+lm1+lb1+mt1+mm1+mb1+rt1+rm1+rb1+lt2+lm2+lb2+mt2+mm2+mb2+rt2+rm2+rb2,family="poisson", data=train)
+
+library(boot)
+cv.glm1 <- cv.glm(train, m1, K=10)
+cv.glm2 <- cv.glm(train, m2, K=10)
+mse.min1 <-cv.glm1$delta[2] 
+mse.min2 <-cv.glm2$delta[2] 
+# with location is better
+
+#prediction
+x <- train[,c(-1,-3)]
+y <- train[,3]
+x1 <- train[,c(-1:-3)]
+
+y.test <- test[,3]
+x.test <- test[,c(-1,-3)]
+
+prediction.glm <- predict(m1,x.test,type="link")
+rmse.glm <- sqrt(mean((y.test-prediction.glm)^2))
+
+
+library(lars)
+library(MASS)
+library(glmnet)
+# ridge 
+set.seed(2016)
+x <- model.matrix(~., x)
+x.test <-model.matrix(~., x.test)
+cv.ridge <- cv.glmnet(x=x,y=y,family="poisson",alpha=0,nfolds=10)
+minlam.ridge <- cv.ridge$lambda.min
+mse.min <- cv.ridge$cvm[cv.ridge$lambda == cv.ridge$lambda.min]
+#prediction error
+prediction.ridge <- predict(cv.ridge,as.matrix(x.test),type="link",s="lambda.min")
+rmse.ridge <- sqrt(mean((y.test-prediction.ridge)^2))
+#103.75
+
+
+# lasso
+set.seed(2016)
+cv.lasso <- cv.glmnet(x=x,y=y,family="poisson",alpha=1,nfolds=10)
+minlam.lasso <- cv.lasso$lambda.min
+mse.min <- cv.lasso$cvm[cv.lasso$lambda == cv.lasso$lambda.min]
+#prediction error
+prediction.lasso <- predict(cv.lasso,as.matrix(x.test),type="link",s="lambda.min")
+rmse.lasso <- sqrt(mean((y.test-prediction.lasso)^2))
+mae.lasso <- mean(abs(y.test-prediction.lasso))
+#103.72
+
+
+# elastic
+set.seed(2016)
+cv.elastic <- cv.glmnet(x=x,y,family="poisson",alpha=0.5,nfolds=10)
+minlam.elastic <- cv.elastic$lambda.min
+mse.min <- cv.elastic$cvm[cv.elastic$lambda == cv.elastic$lambda.min]
+#prediction error
+prediction.elastic <- predict(cv.elastic,as.matrix(x.test),type="link",s="lambda.min")
+rmse.elastic <- sqrt(mean((y.test-prediction.elastic)^2))
+#103.72
+
+# adaptive lasso
+set.seed(2016)
+betals <- solve(t(x)%*%x)%*%t(x)%*%y
+cv.adapl <- cv.glmnet(x=x,y,family="poisson",alpha=0.5,nfolds=10,penalty.factor=1/abs(betals))
+minlam.adapl <- cv.adapl$lambda.min
+mse.min <- cv.adapl$cvm[cv.adapl$lambda == cv.adapl$lambda.min]
+#prediction error
+prediction.adapl <- predict(cv.adapl,as.matrix(x.test),type="link",s="lambda.min")
+rmse.adapl <- sqrt(mean((y.test-prediction.adapl)^2))
+#103.72
