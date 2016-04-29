@@ -694,6 +694,7 @@ print(map)
 
 
 #####
+#--------------------------------------------------------#
 # analysis
 gridspace <- read.table("I:/Desktop/grid8_space07hr.csv",header=T,sep=",")
 library(plyr)
@@ -750,14 +751,14 @@ test <- dframe[!dframe$ts %in% train_id,]
 
 
 ## glm poisson 
-memory.limit(size=10000)
+memory.limit(size=20000)
 m1 <- glm(Obs ~ location+lt1+lm1+lb1+mt1+mm1+mb1+rt1+rm1+rb1+lt2+lm2+lb2+mt2+mm2+mb2+rt2+rm2+rb2,family="poisson", data=train)
 m2 <- glm(Obs ~ lt1+lm1+lb1+mt1+mm1+mb1+rt1+rm1+rb1+lt2+lm2+lb2+mt2+mm2+mb2+rt2+rm2+rb2,family="poisson", data=train)
 
 library(boot)
-cv.glm1 <- cv.glm(train, m1, K=10)
-cv.glm2 <- cv.glm(train, m2, K=10)
-mse.min1 <-cv.glm1$delta[2] 
+cv.glm1 <- cv.glm(train, m1, K=10) 
+cv.glm2 <- cv.glm(train, m2, K=10) 
+mse.min1 <-cv.glm1$delta[2]  
 mse.min2 <-cv.glm2$delta[2] 
 # with location is better
 
@@ -821,3 +822,32 @@ mse.min <- cv.adapl$cvm[cv.adapl$lambda == cv.adapl$lambda.min]
 prediction.adapl <- predict(cv.adapl,as.matrix(x.test),type="link",s="lambda.min")
 rmse.adapl <- sqrt(mean((y.test-prediction.adapl)^2))
 #103.72
+
+# MCP & SCAD
+library(ncvreg)
+set.seed(2016)
+cv.mcp <- cv.ncvreg(X=x,y=y,family="poisson",penalty="MCP",nfolds=10)
+minlam.mcp <- cv.mcp$lambda.min
+mse.min <- min(cv.mcp$cve)
+#prediction error
+prediction.mcp <- predict(cv.mcp,as.matrix(x.test),type="link",lambda=minlam.mcp)
+rmse.mcp <- sqrt(mean((y.test-prediction.mcp)^2))
+
+cv.scad <- cv.ncvreg(X=x,y=y,family="poisson",penalty="SCAD",nfolds=10)
+minlam.scad <- cv.scad$lambda.min
+mse.min <- min(cv.scad$cve)
+#prediction error
+prediction.scad <- predict(cv.scad,as.matrix(x.test),type="link",lambda=minlam.scad)
+rmse.scad <- sqrt(mean((y.test-prediction.scad)^2))
+# no bigger difference lasso a little better
+
+##arima
+sample.size <- floor(0.8* as.numeric(max(dframe$ts)))
+train.arima <- dframe[dframe$ts %in% c(1:sample.size),]
+test.arima <- dframe[!dframe$ts %in% c(1:sample.size),]
+library(glarma)
+y.arima <- train.arima[,3]
+X.arima <- as.matrix(train.arima[,-3])
+arima <- glarma(y.arima,X.arima,thetaLags=7,type="NegBin",method="NR",residuals="Pearson",alphaInit=0)
+
+
