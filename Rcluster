@@ -57,7 +57,7 @@ test <- dframe[!dframe$ts %in% train_id,]
 
 # for PPT
 train <- dframe[dframe$ts %in% c(1:37719),]
-test <- dframe[dframe$ts %in% c(37720:37724),] for PPT
+#test <- dframe[dframe$ts %in% c(37720:37724),] for PPT
 test <- dframe[!dframe$ts %in% c(1:37719),]
 
 
@@ -108,6 +108,8 @@ minlam.adapl <- cv.adapl$lambda.min
 mse.min <- cv.adapl$cvm[cv.adapl$lambda == cv.adapl$lambda.min]
 #prediction error
 prediction.adapl <- predict(cv.adapl,as.matrix(x.test),type="response",s="lambda.min")
+out <- cbind(pred=prediction.adapl,value=y.test,location=test[,2],ts=test[,1])
+write.csv(out,file="out.csv",row.names=FALSE)
 rmse.adapl <- sqrt(mean((y.test-prediction.adapl)^2))
 mae.adapl <- mean(abs(y.test-prediction.adapl))
 
