@@ -1,0 +1,197 @@
+# analysis
+gridspace <- read.table("spatial.csv",header=T,sep=",")
+library(plyr)
+library(dplyr)
+library(glmnet)
+library(doParallel)
+registerDoParallel(4)
+gridspace <- gridspace[order(gridspace$timestep),-1]
+grid.subset <- alply(gridspace[,-1],1)
+listmatrix <- lapply(grid.subset, function(x) matrix(x,nrow=6,byrow=FALSE))
+names <- c("loc22","loc32","loc42","loc52",
+           "loc23","loc33","loc43","loc53")
+Names <- gridspace[,1]
+func <- function(x) {
+  mat <- matrix(unlist(x),6,4)
+  w <-  which(mat==mat, arr.ind=TRUE)
+  d <- as.matrix(dist(w, "maximum", diag=TRUE, upper=TRUE))
+  d[d==0]=1
+  a <- apply(d, 1, function(i) mat[i == 1] )
+  length <- lapply(a,length) == 9
+  b <- a[length]
+  names(b) <- names
+  b
+}
+listt <-lapply(listmatrix, func)
+
+unlistdf <- ldply(listt, function(x){
+  df <- ldply(x, function(z) as.data.frame(matrix(z,ncol=9,byrow=T)))
+  names(df)[1] <- "location"; 
+  df
+})
+
+pretime1 <- rbind(matrix(0,ncol=9,nrow=8*1),unlistdf[c(1:(nrow(unlistdf)-8*1)),-c(1:2)])
+pretime2 <- rbind(matrix(0,ncol=9,nrow=8*2),unlistdf[c(1:(nrow(unlistdf)-8*2)),-c(1:2)])
+pretime3 <- rbind(matrix(0,ncol=9,nrow=8*3),unlistdf[c(1:(nrow(unlistdf)-8*3)),-c(1:2)])
+pretime4 <- rbind(matrix(0,ncol=9,nrow=8*4),unlistdf[c(1:(nrow(unlistdf)-8*4)),-c(1:2)])
+pretime5 <- rbind(matrix(0,ncol=9,nrow=8*5),unlistdf[c(1:(nrow(unlistdf)-8*5)),-c(1:2)])
+
+df <- cbind(unlistdf[,c(1,2,7)],pretime1,pretime2,pretime3,pretime4,pretime5)
+df <- df[order(df$location),]
+colnames <- c("times","location","Obs",
+              "lt1","lm1","lb1","mt1","mm1","mb1","rt1","rm1","rb1",
+              "lt2","lm2","lb2","mt2","mm2","mb2","rt2","rm2","rb2",
+              "lt3","lm3","lb3","mt3","mm3","mb3","rt3","rm3","rb3",
+              "lt4","lm4","lb4","mt4","mm4","mb4","rt4","rm4","rb4",
+              "lt5","lm5","lb5","mt5","mm5","mb5","rt5","rm5","rb5")
+colnames(df) <- colnames
+dframe <- df[!df$times %in% c("1","2","3","4","5"),]
+
+
+sample.size <- floor(0.85*max(as.numeric(dframe$times)))
+set.seed(2016)
+train_id <- sample(seq_len(max(as.numeric(dframe$times))),size=sample.size)
+train <- dframe[dframe$times %in% train_id,]
+test <- dframe[!dframe$times %in% train_id,]
+
+# for PPT
+train <- dframe[dframe$ts %in% c(1:37719),]
+#test <- dframe[dframe$ts %in% c(37720:37724),] for PPT
+test <- dframe[!dframe$ts %in% c(1:37719),]
+
+
+x <- train[,c(-1,-3)]
+y <- train[,3]
+y.test <- test[,3]
+x.test <- test[,c(-1,-3)]
+x <- model.matrix(~., x)
+x.test <-model.matrix(~., x.test)
+library(doParallel)
+registerDoParallel(4)
+set.seed(2016)
+cv.lasso <- cv.glmnet(x=x,y=y,family="poisson",alpha=1,nfolds=5,parallel=TRUE)
+prediction.lasso <- predict(cv.lasso,as.matrix(x.test),type="response",s="lambda.min")
+#out <- cbind(pred=prediction.lasso,value=y.test,location=test[,2],ts=test[,1])
+#write.csv(out,file="out.csv",row.names=FALSE)
+mse.min <- cv.lasso$cvm[cv.lasso$lambda == cv.lasso$lambda.min]
+rmse.lasso <- sqrt(mean((y.test-prediction.lasso)^2))
+mae.lasso <- mean(abs(y.test-prediction.lasso))
+
+#group lasso
+group <- c(rep(1,8),rep(2,9),rep(3,9),rep(4,9),rep(5,9),rep(6,9))
+cv.glasso <- cv.grpreg(X=x,y=y,family="poisso",penalty="grLasso",group,nfolds=5,parallel=TRUE,seed=2016)
+prediction.glasso <- predict(cv.glasso,as.matrix(x.test),type="response")
+rmse.glasso <- sqrt(mean((y.test-prediction.glasso)^2))
+mae.glasso <- mean(abs(y.test-prediction.glasso))
+
+
+set.seed(2016)
+library(doParallel)
+registerDoParallel(4)
+cv.ridge <- cv.glmnet(x=x,y=y,family="poisson",alpha=0,nfolds=5,parallel=TRUE)
+minlam.ridge <- cv.ridge$lambda.min
+mse.min <- cv.ridge$cvm[cv.ridge$lambda == cv.ridge$lambda.min]
+#prediction error
+prediction.ridge <- predict(cv.ridge,as.matrix(x.test),type="response",s="lambda.min")
+rmse.ridge <- sqrt(mean((y.test-prediction.ridge)^2))
+mae.ridge <- mean(abs(y.test-prediction.ridge))
+
+set.seed(2016)
+library(doParallel)
+registerDoParallel(4)
+cv.elastic <- cv.glmnet(x=x,y,family="poisson",alpha=0.5,nfolds=5,parallel=TRUE)
+minlam.elastic <- cv.elastic$lambda.min
+mse.min <- cv.elastic$cvm[cv.elastic$lambda == cv.elastic$lambda.min]
+#prediction error
+prediction.elastic <- predict(cv.elastic,as.matrix(x.test),type="response",s="lambda.min")
+rmse.elastic <- sqrt(mean((y.test-prediction.elastic)^2))
+mae.elastic <- mean(abs(y.test-prediction.elastic))
+
+set.seed(2016)
+library(doParallel)
+registerDoParallel(4)
+betals <- solve(t(x)%*%x)%*%t(x)%*%y
+cv.adapl <- cv.glmnet(x=x,y,family="poisson",alpha=0.5,nfolds=5,penalty.factor=1/abs(betals),parallel=TRUE)
+minlam.adapl <- cv.adapl$lambda.min
+mse.min <- cv.adapl$cvm[cv.adapl$lambda == cv.adapl$lambda.min]
+#prediction error
+prediction.adapl <- predict(cv.adapl,as.matrix(x.test),type="response",s="lambda.min")
+out <- cbind(pred=prediction.adapl,value=y.test,location=test[,2],ts=test[,1])
+write.csv(out,file="out.csv",row.names=FALSE)
+rmse.adapl <- sqrt(mean((y.test-prediction.adapl)^2))
+mae.adapl <- mean(abs(y.test-prediction.adapl))
+
+library(ncvreg)
+set.seed(2016)
+library(doParallel)
+registerDoParallel(4)
+cv.mcp <- cv.ncvreg(X=x,y=y,family="poisson",penalty="MCP",nfolds=5,parallel=TRUE)
+minlam.mcp <- cv.mcp$lambda.min
+mse.min <- min(cv.mcp$cve)
+#prediction error
+prediction.mcp <- predict(cv.mcp,as.matrix(x.test),type="response",lambda=minlam.mcp)
+rmse.mcp <- sqrt(mean((y.test-prediction.mcp)^2))
+mae.mcp <- mean(abs(y.test-prediction.mcp))
+
+set.seed(2016)
+library(doParallel)
+registerDoParallel(4)
+cv.scad <- cv.ncvreg(X=x,y=y,family="poisson",penalty="SCAD",nfolds=5,parallel=TRUE)
+minlam.scad <- cv.scad$lambda.min
+mse.min <- min(cv.scad$cve)
+#prediction error
+prediction.scad <- predict(cv.scad,as.matrix(x.test),type="response",lambda=minlam.scad)
+rmse.scad <- sqrt(mean((y.test-prediction.scad)^2))
+mae.scad <- mean(abs(y.test-prediction.scad))
+
+
+# test for random sample
+sample.size <- floor(0.85*max(as.numeric(dframe$ts)))
+set.seed(2016)
+train_id <- sample(seq_len(max(as.numeric(dframe$ts))),size=sample.size)
+train <- dframe[dframe$ts %in% train_id,]
+test <- dframe[!dframe$ts %in% train_id,]
+x <- train[,c(-1,-3)]
+y <- train[,3]
+y.test <- test[,3]
+x.test <- test[,c(-1,-3)]
+x <- model.matrix(~., x)
+x.test <-model.matrix(~., x.test)
+library(doParallel)
+registerDoParallel(4)
+set.seed(2016)
+cv.lasso <- cv.glmnet(x=x,y=y,family="poisson",alpha=1,nfolds=5,parallel=TRUE)
+prediction.lasso <- predict(cv.lasso,as.matrix(x.test),type="response",s="lambda.min")
+rmse.lasso <- sqrt(mean((y.test-prediction.lasso)^2))
+mae.lasso <- mean(abs(y.test-prediction.lasso))
+
+
+#----------------------------------#
+#non spatial features#
+attribute <- read.table("attribute.csv",header=T,sep=",")
+attribute  <- mutate(attribute,location=paste('loc',location_index,sep=""))[,c(-1,-2)]
+pretime1.ns <- mutate(attribute,times=timestep+1)
+df1  <-  merge(dframe, pretime1.ns, by.x=c("times", "location"), by.y=c("times", "location"),all.x=TRUE)
+
+
+####
+sample.size <- floor(0.85*max(as.numeric(df1$times)))
+set.seed(2016)
+train_id <- sample(seq_len(max(as.numeric(df1$times))),size=sample.size)
+train <- dframe[df1$times %in% train_id,]
+test <- dframe[!df1$times %in% train_id,]
+x <- train[,c(-1,-3,-49,-50,-51,-66,-67,-68,-69)]
+y <- train[,3]
+y.test <- test[,3]
+x.test <- test[,c(-1,-3,-49,-50,-51,-66,-67,-68,-69)]
+x <- model.matrix(~., x)
+x.test <-model.matrix(~., x.test)
+library(doParallel)
+registerDoParallel(4)
+set.seed(2016)
+cv.lasso <- cv.glmnet(x=x,y=y,family="poisson",alpha=0,nfolds=5,parallel=TRUE)
+prediction.lasso <- predict(cv.lasso,as.matrix(x.test),type="response",s="lambda.min")
+#out <- cbind(pred=prediction.lasso,value=y.test,location=test[,2],ts=test[,1])
+#write.csv(out,file="out.csv",row.names=FALSE)
+rmse.lasso <- sqrt(mean((y.test-prediction.lasso)^2))
+mae.lasso <- mean(abs(y.test-prediction.lasso))
