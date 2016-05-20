@@ -7,7 +7,7 @@ library(doParallel)
 registerDoParallel(4)
 gridspace <- gridspace[order(gridspace$timestep),-1]
 grid.subset <- alply(gridspace[,-1],1)
-listmatrix <- lapply(grid.subset, function(x) matrix(x,nrow=6,byrow=FALSE))
+listmatrix <- lapply(grid.subset, function(x) matrix(x,nrow=6,byrow=TRUE))
 names <- c("loc22","loc32","loc42","loc52",
            "loc23","loc33","loc43","loc53")
 Names <- gridspace[,1]
@@ -23,12 +23,21 @@ func <- function(x) {
   b
 }
 listt <-lapply(listmatrix, func)
+.id <- rep(c(1:44640),each=8)
+location <- rep(c("loc22","loc32","loc42","loc52",
+              "loc23","loc33","loc43","loc53"),times=44640)
+
+prehead <-  as.data.frame(cbind(.id,location))
 
 unlistdf <- ldply(listt, function(x){
   df <- ldply(x, function(z) as.data.frame(matrix(z,ncol=9,byrow=T)))
   names(df)[1] <- "location"; 
   df
 })
+
+unlistdf <- join(prehead, unlistdf, by = c('.id','location'), type = "left", match = "all")
+unlistdf[is.na(unlistdf)] <- 0
+
 
 pretime1 <- rbind(matrix(0,ncol=9,nrow=8*1),unlistdf[c(1:(nrow(unlistdf)-8*1)),-c(1:2)])
 pretime2 <- rbind(matrix(0,ncol=9,nrow=8*2),unlistdf[c(1:(nrow(unlistdf)-8*2)),-c(1:2)])
@@ -46,6 +55,7 @@ colnames <- c("times","location","Obs",
               "lt5","lm5","lb5","mt5","mm5","mb5","rt5","rm5","rb5")
 colnames(df) <- colnames
 dframe <- df[!df$times %in% c("1","2","3","4","5"),]
+
 
 
 sample.size <- floor(0.85*max(as.numeric(dframe$times)))
@@ -169,9 +179,67 @@ mae.lasso <- mean(abs(y.test-prediction.lasso))
 #----------------------------------#
 #non spatial features#
 attribute <- read.table("attribute.csv",header=T,sep=",")
-attribute  <- mutate(attribute,location=paste('loc',location_index,sep=""))[,c(-1,-2)]
+attribute  <- mutate(attribute,location=paste('loc',location_index,sep=""))[,c(-1,-2,-12,-13)]
 pretime1.ns <- mutate(attribute,times=timestep+1)
-df1  <-  merge(dframe, pretime1.ns, by.x=c("times", "location"), by.y=c("times", "location"),all.x=TRUE)
+
+### time sequence
+start <- as.POSIXct("2015-07-01 00:00:00")
+end <- as.POSIXct("2015-07-31 23:59:59")
+datetime <- rep(seq(from=start, by=60, to=end),each=8)
+hours <- hour(datetime) 
+day.index <- trunc(hours/6)
+times <- rep(c(1:44640),each=8)
+location <- rep(c("loc22","loc32","loc42","loc52",
+                  "loc23","loc33","loc43","loc53"),times=44640)
+Hours <- as.data.frame(cbind(times,hours,day.index,location))
+Hours <- Hours[!Hours$times %in% c("1","2","3","4","5"),]
+dframehour <- join(dframe,Hours,by=c("times","location"),type="left")
+df1  <- join(dframehour, pretime1.ns, by = c('times','location'), type = "left", match = "all")
+df1 [is.na(df1)] <- 0
+sample.size1 <- floor(0.85*max(as.numeric(df1$times)))
+set.seed(2016)
+train_id1 <- sample(seq_len(max(as.numeric(df1$times))),size=sample.size)
+train1 <- df1[df1$times %in% train_id,]
+test1 <- df1[!df1$times %in% train_id,]
+x1 <- subset(train1, select=-c(times,Obs,timestep))
+y1 <- as.matrix(subset(train1, select=Obs))
+y1.test <- as.matrix(subset(test1, select=Obs))
+x1.test <- subset(test1, select=-c(times,Obs,timestep))
+x1 <- model.matrix(~., x1)
+x1.test <-model.matrix(~., x1.test)
+library(doParallel)
+registerDoParallel(4)
+set.seed(2016)
+cv.lasso1 <- cv.glmnet(x=x1,y=y1,family="poisson",alpha=1,nfolds=5,parallel=TRUE)
+prediction.lasso1 <- predict(cv.lasso1,as.matrix(x1.test),type="response",s="lambda.min")
+mse.min1 <- cv.lasso1$cvm[cv.lasso1$lambda == cv.lasso1$lambda.min]
+rmse.lasso1 <- sqrt(mean((y1.test-prediction.lasso1)^2))
+mae.lasso1 <- mean(abs(y1.test-prediction.lasso1))
+
+
+## weather
+weather <- read.table("weather.csv",header=T,sep=",")
+weather <- weather %>% mutate(Month=as.numeric(month(weather$DATE.LT))) %>% subset(Month==7)
+weather.sub <-subset(weather,select=c("TIME.LT","VIS","CEIL","GML","BZO","X.VIS",
+                                      "X.CEIL","X.GML","X.WDIR","X.WSPD","X.WGUS","X.SHWR")) 
+date1 <- data.frame(do.call(rbind, strsplit(as.vector(weather$DATE.LT), split = "-"))) %>% mutate(date=ymd(paste(X3,X2,X1)))
+weather.subb <- cbind.data.frame(weather.sub,ten=date1$date) %>% mutate(ten= paste(ten,TIME.LT)) 
+
+joinn <- join(Hours,weather.subb,by=c("ten"),type="left")
+
+
+start <- ymd_hms("2015-07-01 00:00:00")
+end <- ymd_hms("2015-07-31 23:59:59")
+datetime <- rep(seq(from=start, by=60, to=end),each=8)
+hours <- hour(datetime) 
+ten <-cut(datetime,breaks=6*24*31) 
+day.index <- trunc(hours/6)
+times <- rep(c(1:44640),each=8)
+location <- rep(c("loc22","loc32","loc42","loc52",
+                  "loc23","loc33","loc43","loc53"),times=44640)
+Hours <- cbind.data.frame(times,hours,day.index,location,ten)
+
+
 
 
 ####
@@ -195,3 +263,21 @@ prediction.lasso <- predict(cv.lasso,as.matrix(x.test),type="response",s="lambda
 #write.csv(out,file="out.csv",row.names=FALSE)
 rmse.lasso <- sqrt(mean((y.test-prediction.lasso)^2))
 mae.lasso <- mean(abs(y.test-prediction.lasso))
+
+
+### roll windows lasso
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
