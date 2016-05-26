@@ -11,6 +11,7 @@ grid.subset <- alply(gridspace[,-1],1)
 listmatrix <- lapply(grid.subset, function(x) matrix(x,nrow=6,byrow=TRUE))
 names <- c("loc22","loc32","loc42","loc52",
            "loc23","loc33","loc43","loc53")
+Names <- gridspace[,1]
 func <- function(x) {
   mat <- matrix(unlist(x),6,4)
   w <-  which(mat==mat, arr.ind=TRUE)
@@ -25,7 +26,7 @@ func <- function(x) {
 listt <-lapply(listmatrix, func)
 .id <- rep(c(1:44640),each=8)
 location <- rep(c("loc22","loc32","loc42","loc52",
-                  "loc23","loc33","loc43","loc53"),times=44640)
+              "loc23","loc33","loc43","loc53"),times=44640)
 
 prehead <-  as.data.frame(cbind(.id,location))
 
@@ -64,6 +65,10 @@ train_id <- sample(seq_len(max(as.numeric(dframe$times))),size=sample.size)
 train <- dframe[dframe$times %in% train_id,]
 test <- dframe[!dframe$times %in% train_id,]
 
+# for PPT
+train <- dframe[dframe$ts %in% c(1:37719),]
+#test <- dframe[dframe$ts %in% c(37720:37724),] for PPT
+test <- dframe[!dframe$ts %in% c(1:37719),]
 
 
 x <- train[,c(-1,-3)]
@@ -151,30 +156,40 @@ rmse.scad <- sqrt(mean((y.test-prediction.scad)^2))
 mae.scad <- mean(abs(y.test-prediction.scad))
 
 
-
+# test for random sample
+sample.size <- floor(0.85*max(as.numeric(dframe$ts)))
+set.seed(2016)
+train_id <- sample(seq_len(max(as.numeric(dframe$ts))),size=sample.size)
+train <- dframe[dframe$ts %in% train_id,]
+test <- dframe[!dframe$ts %in% train_id,]
+x <- train[,c(-1,-3)]
+y <- train[,3]
+y.test <- test[,3]
+x.test <- test[,c(-1,-3)]
+x <- model.matrix(~., x)
+x.test <-model.matrix(~., x.test)
+library(doParallel)
+registerDoParallel(4)
+set.seed(2016)
+cv.lasso <- cv.glmnet(x=x,y=y,family="poisson",alpha=1,nfolds=5,parallel=TRUE)
+prediction.lasso <- predict(cv.lasso,as.matrix(x.test),type="response",s="lambda.min")
+rmse.lasso <- sqrt(mean((y.test-prediction.lasso)^2))
+mae.lasso <- mean(abs(y.test-prediction.lasso))
 
 
 #----------------------------------#
-#non spatial features#
-attribute <- read.table("attribute.csv",header=T,sep=",")
-attribute  <- mutate(attribute,location=paste('loc',location_index,sep=""))[,c(-1,-2,-12,-13)]
-
-
-pretime1.ns <- mutate(attribute,times=timestep+1)
-
-
-names(attribute) <- tolower(names(attribute))
-aqm <- melt(attribute, id=c("timestep", "location"), na.rm=TRUE)
-acast <- acast(aqm, timestep ~ location ~ variable)
-attply <- alply(acast,3,.dims = TRUE)
-
-trans <- function(mat){
-grid <- alply(mat,1,.dims=TRUE)
-gridmatrix <- lapply(grid, function(x) matrix(x,nrow=6,byrow=TRUE))
-gridmatrix <- lapply(gridmatrix,function(x) replace(x,is.na(x),0))
-
+# spatial features
+gridspace <- read.table("spatial.csv",header=T,sep=",")
+gridspace <- gridspace[order(gridspace$timestep),-1]
+timestep <- as.data.frame(c(1:44640))
+names(timestep) <- "timestep"
+gridspace <- join(timestep,gridspace,by="timestep",type = "left")
+gridspace[is.na(gridspace)] <- 0
+grid.subset <- alply(gridspace[,-1],1,.dims = TRUE)
+listmatrix <- lapply(grid.subset, function(x) matrix(x,nrow=6,byrow=TRUE))
 names <- c("loc22","loc32","loc42","loc52",
            "loc23","loc33","loc43","loc53")
+Names <- gridspace[,1]
 func <- function(x) {
   mat <- matrix(unlist(x),6,4)
   w <-  which(mat==mat, arr.ind=TRUE)
@@ -186,7 +201,7 @@ func <- function(x) {
   names(b) <- names
   b
 }
-listt <-lapply(gridmatrix, func)
+listt <-lapply(listmatrix, func)
 .id <- rep(c(1:44640),each=8)
 location <- rep(c("loc22","loc32","loc42","loc52",
                   "loc23","loc33","loc43","loc53"),times=44640)
@@ -198,45 +213,98 @@ unlistdf <- ldply(listt, function(x){
   names(df)[1] <- "location"; 
   df
 })
+
 unlistdf <- join(prehead, unlistdf, by = c('.id','location'), type = "left", match = "all")
 unlistdf[is.na(unlistdf)] <- 0
-unlistdf
+
+pretime1 <- rbind(matrix(0,ncol=9,nrow=8*1),unlistdf[c(1:(nrow(unlistdf)-8*1)),-c(1:2)])
+pretime2 <- rbind(matrix(0,ncol=9,nrow=8*2),unlistdf[c(1:(nrow(unlistdf)-8*2)),-c(1:2)])
+pretime3 <- rbind(matrix(0,ncol=9,nrow=8*3),unlistdf[c(1:(nrow(unlistdf)-8*3)),-c(1:2)])
+pretime4 <- rbind(matrix(0,ncol=9,nrow=8*4),unlistdf[c(1:(nrow(unlistdf)-8*4)),-c(1:2)])
+pretime5 <- rbind(matrix(0,ncol=9,nrow=8*5),unlistdf[c(1:(nrow(unlistdf)-8*5)),-c(1:2)])
+
+df <- cbind(unlistdf[,c(1,2,7)],pretime1,pretime2,pretime3,pretime4,pretime5)
+df <- df[order(df$location),]
+colnames <- c("times","location","Obs",
+              "lt1","lm1","lb1","mt1","mm1","mb1","rt1","rm1","rb1",
+              "lt2","lm2","lb2","mt2","mm2","mb2","rt2","rm2","rb2",
+              "lt3","lm3","lb3","mt3","mm3","mb3","rt3","rm3","rb3",
+              "lt4","lm4","lb4","mt4","mm4","mb4","rt4","rm4","rb4",
+              "lt5","lm5","lb5","mt5","mm5","mb5","rt5","rm5","rb5")
+colnames(df) <- colnames
+dframe <- df[!df$times %in% c("1","2","3","4","5"),]
+
+#attribute features#
+attribute <- read.table("attribute.csv",header=T,sep=",")
+attribute  <- mutate(attribute,location=paste('loc',location_index,sep=""))[,c(-1,-2,-12,-13)]
+names(attribute) <- tolower(names(attribute))
+aqm <- melt(attribute, id=c("timestep", "location"), na.rm=TRUE)
+acast <- acast(aqm, timestep ~ location ~ variable)
+attply <- alply(acast,3,.dims = TRUE)
+
+trans <- function(mat){
+  grid <- alply(mat,1,.dims=TRUE)
+  gridmatrix <- lapply(grid, function(x) matrix(x,nrow=6,byrow=TRUE))
+  gridmatrix <- lapply(gridmatrix,function(x) replace(x,is.na(x),0))
+  
+  names <- c("loc22","loc32","loc42","loc52",
+             "loc23","loc33","loc43","loc53")
+  func <- function(x) {
+    mat <- matrix(unlist(x),6,4)
+    w <-  which(mat==mat, arr.ind=TRUE)
+    d <- as.matrix(dist(w, "maximum", diag=TRUE, upper=TRUE))
+    d[d==0]=1
+    a <- apply(d, 1, function(i) mat[i == 1] )
+    length <- lapply(a,length) == 9
+    b <- a[length]
+    names(b) <- names
+    b
+  }
+  listt <-lapply(gridmatrix, func)
+  .id <- rep(c(1:44640),each=8)
+  location <- rep(c("loc22","loc32","loc42","loc52",
+                    "loc23","loc33","loc43","loc53"),times=44640)
+  
+  prehead <-  as.data.frame(cbind(.id,location))
+  
+  unlistdf <- ldply(listt, function(x){
+    df <- ldply(x, function(z) as.data.frame(matrix(z,ncol=9,byrow=T)))
+    names(df)[1] <- "location"; 
+    df
+  })
+  unlistdf <- join(prehead, unlistdf, by = c('.id','location'), type = "left", match = "all")
+  unlistdf[is.na(unlistdf)] <- 0
+  unlistdf
 }
 ans <- lapply(attply,trans)
+allattribute <- do.call(cbind, ans) %>% subset(select=-c(airspeed..id,airspeed.location,
+                                                         heading..id,heading.location,
+                                                         heading_vertical..id,heading_vertical.location,
+                                                         peak_mass..id,peak_mass.location,
+                                                         mass_correction..id,mass_correction.location,
+                                                         position_x..id,position_x.location,
+                                                         position_y..id,position_y.location))
+colnames(allattribute)[which(names(allattribute) == "velocity..id")] <- "times"
+colnames(allattribute)[which(names(allattribute) == "velocity.location")] <- "location"
+
+addframe <- as.data.frame(matrix(0,ncol=72,nrow=8*1))
+names(addframe) <- names(allattribute)[-c(1:2)]
+pretime1.attr <- rbind(do.call("rbind", replicate(1, addframe, simplify = FALSE)),allattribute[c(1:(nrow(allattribute)-8*1)),-c(1:2)])
+pretime2.attr <- rbind(do.call("rbind", replicate(2, addframe, simplify = FALSE)),allattribute[c(1:(nrow(allattribute)-8*2)),-c(1:2)])
+pretime3.attr <- rbind(do.call("rbind", replicate(3, addframe, simplify = FALSE)),allattribute[c(1:(nrow(allattribute)-8*3)),-c(1:2)])
+pretime4.attr <- rbind(do.call("rbind", replicate(4, addframe, simplify = FALSE)),allattribute[c(1:(nrow(allattribute)-8*4)),-c(1:2)])
+pretime5.attr <- rbind(do.call("rbind", replicate(5, addframe, simplify = FALSE)),allattribute[c(1:(nrow(allattribute)-8*5)),-c(1:2)])
+
+names(pretime1.attr) <- paste(names(addframe),'.p1',sep="")
+names(pretime2.attr) <- paste(names(addframe),'.p2',sep="")
+names(pretime3.attr) <- paste(names(addframe),'.p3',sep="")
+names(pretime4.attr) <- paste(names(addframe),'.p4',sep="")
+names(pretime5.attr) <- paste(names(addframe),'.p5',sep="")
+
+attrall <- cbind(allattribute[,c(1,2)],pretime1.attr,pretime2.attr,pretime3.attr,pretime4.attr,pretime5.attr)
 
 
-
-
-
-
-
-
-
-### time sequence
-start <- as.POSIXct("2015-07-01 00:00:00")
-end <- as.POSIXct("2015-07-31 23:59:59")
-datetime <- rep(seq(from=start, by=60, to=end),each=8)
-hours <- hour(datetime) 
-day.index <- trunc(hours/6)
-times <- rep(c(1:44640),each=8)
-location <- rep(c("loc22","loc32","loc42","loc52",
-                  "loc23","loc33","loc43","loc53"),times=44640)
-Hours <- as.data.frame(cbind(times,hours,day.index,location))
-Hours <- Hours[!Hours$times %in% c("1","2","3","4","5"),]
-dframehour <- join(dframe,Hours,by=c("times","location"),type="left")
-df1  <- join(dframehour, pretime1.ns, by = c('times','location'), type = "left", match = "all")
-df1 [is.na(df1)] <- 0
-
-
-
-## weather
-weather <- read.table("weather.csv",header=T,sep=",")
-weather <- weather %>% mutate(Month=as.numeric(month(weather$DATE.LT))) %>% subset(Month==7)
-weather.sub <-subset(weather,select=c("TIME.LT","VIS","CEIL","GML","BZO","X.VIS",
-                                      "X.CEIL","X.GML","X.WDIR","X.WSPD","X.WGUS","X.SHWR")) 
-date1 <- data.frame(do.call(rbind, strsplit(as.vector(weather$DATE.LT), split = "-"))) %>% mutate(date=ymd(paste(X3,X2,X1)))
-weather.subset <- cbind.data.frame(weather.sub,ten=date1$date) %>% mutate(ten= paste(ten,TIME.LT)) 
-
+### time slot
 start <- ymd_hms("2015-07-01 00:00:00")
 end <- ymd_hms("2015-07-31 23:59:59")
 datetime <- rep(seq(from=start, by=60, to=end),each=8)
@@ -247,35 +315,158 @@ times <- rep(c(1:44640),each=8)
 location <- rep(c("loc22","loc32","loc42","loc52",
                   "loc23","loc33","loc43","loc53"),times=44640)
 Hours <- cbind.data.frame(times,hours,day.index,location,ten)
-joinn <- join(Hours,weather.subb,by=c("ten"),type="left")
+
+
+## weather
+weather <- read.table("weather.csv",header=T,sep=",")
+weather <- weather %>% mutate(Month=as.numeric(month(weather$DATE.LT))) %>% subset(Month==7)
+weather.sub <-subset(weather,select=c("TIME.LT","VIS","CEIL","GML","BZO","X.VIS",
+                                      "X.CEIL","X.GML","X.WDIR","X.WSPD","X.WGUS","X.SHWR")) 
+date1 <- data.frame(do.call(rbind, strsplit(as.vector(weather$DATE.LT), split = "-"))) %>% mutate(date=ymd(paste(X3,X2,X1)))
+weather.subb <- cbind.data.frame(weather.sub,ten=date1$date) %>% mutate(ten= paste(ten,TIME.LT)) 
+
+weather.join <- join(Hours,weather.subb,by=c("ten"),type="left") %>% subset(select=-c(hours,day.index,TIME.LT))
+
+
+#### all include
+dframehour <- join(dframe,Hours,by=c("times","location"),type="left")
+bird <- join(dframehour,weather.join,by=c("times","location"),type="left")
+birds <- join(bird,attrall,by=c("times","location"),type="left")%>% subset(select=-c(ten))%>% subset(select=-c(ten))
 
 
 
-## all features
-sample.size1 <- floor(0.85*max(as.numeric(df1$times)))
+
+##birds
+sample.size1 <- floor(0.85*max(as.numeric(birds$times)))
 set.seed(2016)
-train_id1 <- sample(seq_len(max(as.numeric(df1$times))),size=sample.size)
-train1 <- df1[df1$times %in% train_id,]
-test1 <- df1[!df1$times %in% train_id,]
-x1 <- subset(train1, select=-c(times,Obs,timestep))
+train_id1 <- sample(seq_len(max(as.numeric(birds$times))),size=sample.size1)
+train1 <- birds[birds$times %in% train_id1,]
+test1 <- birds[!birds$times %in% train_id1,]
+x1 <- subset(train1, select=-c(times,Obs))
 y1 <- as.matrix(subset(train1, select=Obs))
 y1.test <- as.matrix(subset(test1, select=Obs))
-x1.test <- subset(test1, select=-c(times,Obs,timestep))
+x1.test <- subset(test1, select=-c(times,Obs))
 x1 <- model.matrix(~., x1)
 x1.test <-model.matrix(~., x1.test)
 library(doParallel)
 registerDoParallel(4)
 set.seed(2016)
-cv.lasso1 <- cv.glmnet(x=x1,y=y1,family="poisson",alpha=1,nfolds=5,parallel=TRUE)
+cv.lasso1 <- cv.glmnet(x=x1,y=y1,family="poisson",alpha=1,nfolds=10,parallel=TRUE)
 prediction.lasso1 <- predict(cv.lasso1,as.matrix(x1.test),type="response",s="lambda.min")
 mse.min1 <- cv.lasso1$cvm[cv.lasso1$lambda == cv.lasso1$lambda.min]
 rmse.lasso1 <- sqrt(mean((y1.test-prediction.lasso1)^2))
 mae.lasso1 <- mean(abs(y1.test-prediction.lasso1))
 
 
-### roll windows lasso
+##bird
+bird <- bird %>% subset(select=-c(ten)) %>% subset(select=-c(ten))
+sample.size2 <- floor(0.85*max(as.numeric(bird$times)))
+set.seed(2016)
+train_id2 <- sample(seq_len(max(as.numeric(bird$times))),size=sample.size2)
+train2 <- bird[bird$times %in% train_id2,]
+test2 <- bird[!bird$times %in% train_id2,]
+x2 <- subset(train2, select=-c(times,Obs))
+y2 <- as.matrix(subset(train2, select=Obs))
+y2.test <- as.matrix(subset(test2, select=Obs))
+x2.test <- subset(test2, select=-c(times,Obs))
+x2 <- model.matrix(~., x2)
+x2.test <-model.matrix(~., x2.test)
+library(doParallel)
+registerDoParallel(4)
+set.seed(2016)
+cv.lasso2 <- cv.glmnet(x=x2,y=y2,family="poisson",alpha=1,nfolds=10,parallel=TRUE)
+prediction.lasso2 <- predict(cv.lasso2,as.matrix(x2.test),type="response",s="lambda.min")
+mse.min2 <- cv.lasso2$cvm[cv.lasso2$lambda == cv.lasso2$lambda.min]
+rmse.lasso2 <- sqrt(mean((y2.test-prediction.lasso2)^2))
+mae.lasso2 <- mean(abs(y2.test-prediction.lasso2))
 
 
+
+## dframe
+sample.size3 <- floor(0.85*max(as.numeric(dframe$times)))
+set.seed(2016)
+train_id3 <- sample(seq_len(max(as.numeric(dframe$times))),size=sample.size3)
+train3 <- dframe[dframe$times %in% train_id3,]
+test3 <- dframe[!dframe$times %in% train_id3,]
+x3 <- subset(train3, select=-c(times,Obs))
+y3 <- as.matrix(subset(train3, select=Obs))
+y3.test <- as.matrix(subset(test3, select=Obs))
+x3.test <- subset(test3, select=-c(times,Obs))
+x3 <- model.matrix(~., x3)
+x3.test <-model.matrix(~., x3.test)
+library(doParallel)
+registerDoParallel(4)
+set.seed(2016)
+cv.lasso3 <- cv.glmnet(x=x3,y=y3,family="poisson",alpha=1,nfolds=10,parallel=TRUE)
+prediction.lasso3 <- predict(cv.lasso3,as.matrix(x3.test),type="response",s="lambda.min")
+mse.min3 <- cv.lasso3$cvm[cv.lasso3$lambda == cv.lasso3$lambda.min]
+rmse.lasso3 <- sqrt(mean((y3.test-prediction.lasso3)^2))
+mae.lasso3 <- mean(abs(y3.test-prediction.lasso3))
+
+
+### group lasso
+
+#group lasso ### didn't show better
+group <- c(1,rep(2,7),rep(3,45),4,5,rep(6,11),rep(7,45),rep(8,45),rep(9,45),rep(10,45),rep(11,45),rep(12,45),rep(13,45),rep(14,45))
+cv.glasso <- cv.grpreg(X=x1,y=y1,family="poisso",penalty="grLasso",group,nfolds=10,parallel=TRUE,seed=2016)
+prediction.glasso <- predict(cv.glasso,as.matrix(x1.test),type="response")
+rmse.glasso <- sqrt(mean((y1.test-prediction.glasso)^2))
+mae.glasso <- mean(abs(y1.test-prediction.glasso))
+
+
+
+### adaptive lasso
+set.seed(2016)
+library(doParallel)
+registerDoParallel(4)
+betals <- solve(t(x1)%*%x1)%*%t(x1)%*%y1
+cv.adapl <- cv.glmnet(x=x1,y=y1,family="poisson",alpha=1,nfolds=10,penalty.factor=1/abs(betals),parallel=TRUE)
+minlam.adapl <- cv.adapl$lambda.min
+mse.min <- cv.adapl$cvm[cv.adapl$lambda == cv.adapl$lambda.min]
+prediction.adapl <- predict(cv.adapl,as.matrix(x1.test),type="response",s="lambda.min")
+rmse.adapl <- sqrt(mean((y1.test-prediction.adapl)^2))
+mae.adapl <- mean(abs(y1.test-prediction.adapl))
+
+
+
+##test negative binomial
+library(mpath)
+
+cv.test <- cv.glmreg_fit(x1, y1, family="negbin",nfolds=10,alpha=1,theta=1)
+prediction.nb <- predict(cv.test,as.matrix(x1.test),type="response",s="lambda.optim")
+
+prediction.nb <- predict(object=cv.test$fit, which=cv.test$lambda.which, type="response",
+                          model=c("full"))
+
+
+
+##birds sequence CV
+sample.size1 <- floor(0.85*max(as.numeric(birds$times)))
+set.seed(2016)
+
+train1 <- birds[birds$times %in% c(1:sample.size1),]
+test1 <- birds[!birds$times %in% c(1:sample.size1),]
+
+x1 <- subset(train1, select=-c(times,Obs))
+y1 <- as.matrix(subset(train1, select=Obs))
+y1.test <- as.matrix(subset(test1, select=Obs))
+x1.test <- subset(test1, select=-c(times,Obs))
+x1 <- model.matrix(~., x1)
+x1.test <-model.matrix(~., x1.test)
+library(doParallel)
+registerDoParallel(4)
+set.seed(2016)
+cv.lasso1 <- cv.glmnet(x=x1,y=y1,family="poisson",alpha=1,nfolds=10,parallel=TRUE)
+prediction.lasso1 <- predict(cv.lasso1,as.matrix(x1.test),type="response",s="lambda.min")
+mse.min1 <- cv.lasso1$cvm[cv.lasso1$lambda == cv.lasso1$lambda.min]
+rmse.lasso1 <- sqrt(mean((y1.test-prediction.lasso1)^2))
+mae.lasso1 <- mean(abs(y1.test-prediction.lasso1))
+
+
+
+
+
+### average mass prediction 
 
 
 
