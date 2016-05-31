@@ -26,7 +26,7 @@ func <- function(x) {
 listt <-lapply(listmatrix, func)
 .id <- rep(c(1:44640),each=8)
 location <- rep(c("loc22","loc32","loc42","loc52",
-              "loc23","loc33","loc43","loc53"),times=44640)
+                  "loc23","loc33","loc43","loc53"),times=44640)
 
 prehead <-  as.data.frame(cbind(.id,location))
 
@@ -431,12 +431,11 @@ mae.adapl <- mean(abs(y1.test-prediction.adapl))
 
 ##test negative binomial
 library(mpath)
-
-cv.test <- cv.glmreg_fit(x1, y1, family="negbin",nfolds=10,alpha=1,theta=1)
+cv.test <- cv.glmreg_fit(x1.nb, y1.nb, family="negbin",nfolds=5,alpha=1,theta=1,n.cores=4)
 prediction.nb <- predict(cv.test,as.matrix(x1.test),type="response",s="lambda.optim")
 
 prediction.nb <- predict(object=cv.test$fit, which=cv.test$lambda.which, type="response",
-                          model=c("full"))
+                         model=c("full"))
 
 
 
@@ -468,12 +467,119 @@ mae.lasso1 <- mean(abs(y1.test-prediction.lasso1))
 
 ### average mass prediction 
 
+attribute.mass <- attribute %>% subset(select=c(location,timestep,peak_mass))
+names(attribute.mass) <- c("location","times","peakmass")
+birds.mass <- birds %>% subset(select=-c(Obs)) %>% join(attribute.mass,by=c("times","location"),type="left")
+birds.mass[is.na(birds.mass)] <- 0
+
+samplesize.mass <- floor(0.85*max(as.numeric(birds.mass$times)))
+set.seed(2016)
+train_id <- sample(seq_len(max(as.numeric(birds.mass$times))),size=samplesize.mass)
+train <- birds.mass[birds.mass$times %in% train_id,]
+test <- birds.mass[!birds.mass$times %in% train_id,]
+x.mass <- train[,c(-1,-421)]
+y.mass <- train[,421]
+y.test.mass <- test[,421]
+x.test.mass <- test[,c(-1,-421)]
+x.mass <- model.matrix(~., x.mass)
+x.test.mass <-model.matrix(~., x.test.mass)
+library(doParallel)
+registerDoParallel(4)
+set.seed(2016)
+cv.lasso.mass <- cv.glmnet(x=x.mass,y=y.mass,family="gaussian",alpha=1,nfolds=5,parallel=TRUE)
+prediction.lasso.mass <- predict(cv.lasso.mass,as.matrix(x.test.mass),type="response",s="lambda.min")
+mse.min.mass <- cv.lasso.mass$cvm[cv.lasso.mass$lambda == cv.lasso.mass$lambda.min]
+rmse.lasso.mass <- sqrt(mean((y.test.mass-prediction.lasso.mass)^2))
+mae.lasso.mass <- mean(abs(y.test.mass-prediction.lasso.mass))
+
+#group lasso
+group <- c(rep(1,8),rep(2,45),3,4,rep(5,11),rep(6,360))
+cv.glasso <- cv.grpreg(X=x.mass,y=y.mass,family="gaussian",penalty="grLasso",group,nfolds=5,parallel=TRUE,seed=2016)
+prediction.glasso <- predict(cv.glasso,as.matrix(x.test.mass),type="response")
+rmse.glasso <- sqrt(mean((y.test.mass-prediction.glasso)^2))
+mae.glasso <- mean(abs(y.test.mass-prediction.glasso))
+#result almost same with lasoo
 
 
+set.seed(2016)
+library(doParallel)
+registerDoParallel(4)
+cv.ridge <- cv.glmnet(x=x.mass,y=y.mass,family="gaussian",alpha=0,nfolds=5,parallel=TRUE)
+minlam.ridge <- cv.ridge$lambda.min
+mse.min <- cv.ridge$cvm[cv.ridge$lambda == cv.ridge$lambda.min]
+#prediction error
+prediction.ridge <- predict(cv.ridge,as.matrix(x.test.mass),type="response",s="lambda.min")
+rmse.ridge <- sqrt(mean((y.test.mass-prediction.ridge)^2))
+mae.ridge <- mean(abs(y.test.mass-prediction.ridge))
+
+set.seed(2016)
+library(doParallel)
+registerDoParallel(4)
+cv.elastic <- cv.glmnet(x.mass,y.mass,family="gaussian",alpha=0.5,nfolds=5,parallel=TRUE)
+minlam.elastic <- cv.elastic$lambda.min
+mse.min <- cv.elastic$cvm[cv.elastic$lambda == cv.elastic$lambda.min]
+#prediction error
+prediction.elastic <- predict(cv.elastic,as.matrix(x.test.mass),type="response",s="lambda.min")
+rmse.elastic <- sqrt(mean((y.test.mass-prediction.elastic)^2))
+mae.elastic <- mean(abs(y.test.mass-prediction.elastic))
+
+set.seed(2016)
+library(doParallel)
+registerDoParallel(4)
+betals <- solve(t(x.mass)%*%x.mass)%*%t(x.mass)%*%y.mass
+cv.adapl <- cv.glmnet(x.mass,y.mass,family="gaussian",alpha=0.5,nfolds=5,penalty.factor=1/abs(betals),parallel=TRUE)
+minlam.adapl <- cv.adapl$lambda.min
+mse.min <- cv.adapl$cvm[cv.adapl$lambda == cv.adapl$lambda.min]
+#prediction error
+prediction.adapl <- predict(cv.adapl,as.matrix(x.test.mass),type="response",s="lambda.min")
+rmse.adapl <- sqrt(mean((y.test.mass-prediction.adapl)^2))
+mae.adapl <- mean(abs(y.test.mass-prediction.adapl))
+
+library(ncvreg)
+set.seed(2016)
+library(doParallel)
+registerDoParallel(4)
+cv.mcp <- cv.ncvreg(X=x.mass,y=y.mass,family="gaussian",penalty="MCP",nfolds=5,parallel=TRUE)
+minlam.mcp <- cv.mcp$lambda.min
+mse.min <- min(cv.mcp$cve)
+#prediction error
+prediction.mcp <- predict(cv.mcp,as.matrix(x.test.mass),type="response",lambda=minlam.mcp)
+rmse.mcp <- sqrt(mean((y.test.mass-prediction.mcp)^2))
+mae.mcp <- mean(abs(y.test.mass-prediction.mcp))
+
+set.seed(2016)
+library(doParallel)
+registerDoParallel(4)
+cv.scad <- cv.ncvreg(X=x.mass,y=y.mass,family="gaussian",penalty="SCAD",nfolds=5,parallel=TRUE)
+minlam.scad <- cv.scad$lambda.min
+mse.min <- min(cv.scad$cve)
+#prediction error
+prediction.scad <- predict(cv.scad,as.matrix(x.test),type="response",lambda=minlam.scad)
+rmse.scad <- sqrt(mean((y.test-prediction.scad)^2))
+mae.scad <- mean(abs(y.test-prediction.scad))
 
 
+## neural networks 
+# all features
+library(neuralnet)
+samplesize.mass <- floor(0.85*max(as.numeric(birds.mass$times)))
+set.seed(2016)
+train_id <- sample(seq_len(max(as.numeric(birds.mass$times))),size=samplesize.mass)
+mass.train <- birds.mass[birds.mass$times %in% train_id,]
+mass.test <- birds.mass[!birds.mass$times %in% train_id,]
+x.mass <- mass.train[,-1]
+y.mass <- mass.train[,421]
+y.test.mass <- mass.test[,421]
+x.test.mass <- mass.test[,c(-1,-421)]
+x.mass <- model.matrix(~., x.mass)
+x.test.mass <-model.matrix(~., x.test.mass)
+n <- colnames(x.mass)[-1]
+f <- as.formula(paste('peakmass ~', paste(n[!n %in% 'peakmass'], collapse = ' + ')))
 
 
+nn <- neuralnet(f,data=x.mass[,-1],hidden=c(180,60,30,6),linear.output=FALSE,threshold = 0.01,lifesign = "minimal")
 
+pr.nn <- compute(nn,x.test.mass[,-1])$net.result
+RMSE.nn <- sqrt(mean((y.test.mass-pr.nn)^2))
 
-
+# features afte lasso 
