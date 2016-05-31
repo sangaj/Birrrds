@@ -583,3 +583,27 @@ pr.nn <- compute(nn,x.test.mass[,-1])$net.result
 RMSE.nn <- sqrt(mean((y.test.mass-pr.nn)^2))
 
 # features afte lasso 
+cv.error <- NULL
+k <- 10
+
+library(plyr) 
+pbar <- create_progress_bar('text')
+pbar$init(k)
+
+for(i in 1:k){
+  index <- sample(1:nrow(mass.train),round(0.9*nrow(mass.train)))
+  train.cv <- mass.train[index,]
+  test.cv <- mass.train[-index,]
+  x.mass <- train.cv[,-1]
+  y.mass <- train.cv[,421]
+  y.test.mass <- test.cv[,421]
+  x.test.mass <- test.cv[,c(-1,-421)]
+  x.mass <- model.matrix(~., x.mass)
+  x.test.mass <-model.matrix(~., x.test.mass)
+  n <- colnames(x.mass)[-1]
+  f <- as.formula(paste('peakmass ~', paste(n[!n %in% 'peakmass'], collapse = ' + ')))
+  nncv <- neuralnet(f,data=x.mass[,-1],hidden=c(60,30,6),linear.output=FALSE,threshold = 0.01,lifesign = "minimal")
+  pr.nn <- compute(nncv,x.test.mass[,-1])$net.result
+  cv.error[i] <- sqrt(mean((y.test.mass-pr.nn)^2))
+  pbar$step()
+}
