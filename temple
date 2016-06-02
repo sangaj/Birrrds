@@ -1,3 +1,7 @@
+
+rm(list=ls())
+gc(reset=TRUE)
+
 # analysis
 gridspace <- read.table("spatial.csv",header=T,sep=",")
 library(plyr)
@@ -5,6 +9,7 @@ library(dplyr)
 library(glmnet)
 library(reshape2)
 library(doParallel)
+library(lubridate)
 registerDoParallel(4)
 gridspace <- gridspace[order(gridspace$timestep),-1]
 grid.subset <- alply(gridspace[,-1],1)
@@ -308,9 +313,9 @@ attrall <- cbind(allattribute[,c(1,2)],pretime1.attr,pretime2.attr,pretime3.attr
 start <- ymd_hms("2015-07-01 00:00:00")
 end <- ymd_hms("2015-07-31 23:59:59")
 datetime <- rep(seq(from=start, by=60, to=end),each=8)
-hours <- hour(datetime) 
+hours <- lubridate::hour(datetime) 
 ten <-cut(datetime,breaks=6*24*31) 
-day.index <- trunc(hours/6)
+day.index <- as.factor(trunc(hours/6))
 times <- rep(c(1:44640),each=8)
 location <- rep(c("loc22","loc32","loc42","loc52",
                   "loc23","loc33","loc43","loc53"),times=44640)
@@ -319,7 +324,7 @@ Hours <- cbind.data.frame(times,hours,day.index,location,ten)
 
 ## weather
 weather <- read.table("weather.csv",header=T,sep=",")
-weather <- weather %>% mutate(Month=as.numeric(month(weather$DATE.LT))) %>% subset(Month==7)
+weather <- weather %>% mutate(Month=as.numeric(lubridate::month(weather$DATE.LT))) %>% subset(Month==7)
 weather.sub <-subset(weather,select=c("TIME.LT","VIS","CEIL","GML","BZO","X.VIS",
                                       "X.CEIL","X.GML","X.WDIR","X.WSPD","X.WGUS","X.SHWR")) 
 date1 <- data.frame(do.call(rbind, strsplit(as.vector(weather$DATE.LT), split = "-"))) %>% mutate(date=ymd(paste(X3,X2,X1)))
@@ -471,6 +476,7 @@ attribute.mass <- attribute %>% subset(select=c(location,timestep,peak_mass))
 names(attribute.mass) <- c("location","times","peakmass")
 birds.mass <- birds %>% subset(select=-c(Obs)) %>% join(attribute.mass,by=c("times","location"),type="left")
 birds.mass[is.na(birds.mass)] <- 0
+write.csv(birds.mass,file="birds_mass.csv",row.names=FALSE)
 
 samplesize.mass <- floor(0.85*max(as.numeric(birds.mass$times)))
 set.seed(2016)
@@ -577,21 +583,44 @@ n <- colnames(x.mass)[-1]
 f <- as.formula(paste('peakmass ~', paste(n[!n %in% 'peakmass'], collapse = ' + ')))
 
 
-nn <- neuralnet(f,data=x.mass[,-1],hidden=c(180,60,30,6),linear.output=FALSE,threshold = 0.01,lifesign = "minimal")
+nn <- neuralnet(f,data=x.mass[,-1],hidden=c(180,60,30,6),linear.output=TRUE,threshold = 0.1,lifesign = "minimal")
 
 pr.nn <- compute(nn,x.test.mass[,-1])$net.result
 RMSE.nn <- sqrt(mean((y.test.mass-pr.nn)^2))
 
-# features afte lasso 
-cv.error <- NULL
-k <- 10
 
+# all features to class
+birdsmass <- mutate(birds.mass, peakmass=cut(birds.mass$peakmass,breaks=c(0,round(median(birds.mass$peakmass)),ceiling(max(birds.mass$peakmass))),right = FALSE,labels=c(0,1)))
+
+
+
+
+
+
+
+
+
+# cv for nn
+attribute.mass <- attribute %>% subset(select=c(location,timestep,peak_mass))
+names(attribute.mass) <- c("location","times","peakmass")
+birds.mass <- birds %>% subset(select=-c(Obs)) %>% join(attribute.mass,by=c("times","location"),type="left")
+birds.mass[is.na(birds.mass)] <- 0
+
+library(neuralnet)
+samplesize.mass <- floor(0.85*max(as.numeric(birds.mass$times)))
+set.seed(2016)
+train_id <- sample(seq_len(max(as.numeric(birds.mass$times))),size=samplesize.mass)
+mass.train <- birds.mass[birds.mass$times %in% train_id,]
+mass.test <- birds.mass[!birds.mass$times %in% train_id,]
+
+
+cv.error <- NULL
+k <- 5
 library(plyr) 
 pbar <- create_progress_bar('text')
 pbar$init(k)
-
 for(i in 1:k){
-  index <- sample(1:nrow(mass.train),round(0.9*nrow(mass.train)))
+  index <- sample(1:nrow(mass.train),round(0.85*nrow(mass.train)))
   train.cv <- mass.train[index,]
   test.cv <- mass.train[-index,]
   x.mass <- train.cv[,-1]
@@ -602,8 +631,23 @@ for(i in 1:k){
   x.test.mass <-model.matrix(~., x.test.mass)
   n <- colnames(x.mass)[-1]
   f <- as.formula(paste('peakmass ~', paste(n[!n %in% 'peakmass'], collapse = ' + ')))
-  nncv <- neuralnet(f,data=x.mass[,-1],hidden=c(60,30,6),linear.output=FALSE,threshold = 0.01,lifesign = "minimal")
+  nncv <- neuralnet(f,data=x.mass[,-1],hidden=c(120,30,6),linear.output=FALSE,threshold = 0.01,lifesign = "minimal")
   pr.nn <- compute(nncv,x.test.mass[,-1])$net.result
   cv.error[i] <- sqrt(mean((y.test.mass-pr.nn)^2))
   pbar$step()
 }
+
+
+#h2O for regression
+samplesize.mass <- floor(0.85*max(as.numeric(birds.mass$times)))
+set.seed(2016)
+train_id <- sample(seq_len(max(as.numeric(birds.mass$times))),size=samplesize.mass)
+mass.train <- birds.mass[birds.mass$times %in% train_id,]
+mass.test <- birds.mass[!birds.mass$times %in% train_id,]
+library(devtools)
+install_github("h2oai/h2o-3/h2o-r/ensemble/h2oEnsemble-package")
+library(h2o)
+h2o.init()
+birds.dl <- h2o.deeplearning(x = 2:420, y = 421, training_frame = as.h2o(mass.train),hidden=c(120,30,6),
+                             activation='Rectifier',epochs=0.01,seed=2016,nfolds=5)
+RMSE.dl <- sqrt(mean((h2o.predict(birds.dl, as.h2o(mass.train))-mass.train[,421])^2))
