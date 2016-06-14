@@ -361,6 +361,8 @@ prediction.lasso1 <- predict(cv.lasso1,as.matrix(x1.test),type="response",s="lam
 mse.min1 <- cv.lasso1$cvm[cv.lasso1$lambda == cv.lasso1$lambda.min]
 rmse.lasso1 <- sqrt(mean((y1.test-prediction.lasso1)^2))
 mae.lasso1 <- mean(abs(y1.test-prediction.lasso1))
+dawiderror <- mean((y1.test-prediction.lasso1)^2/prediction.lasso1 + log(prediction.lasso1))
+
 
 
 ##bird
@@ -441,31 +443,6 @@ prediction.nb <- predict(cv.test,as.matrix(x1.test),type="response",s="lambda.op
 
 prediction.nb <- predict(object=cv.test$fit, which=cv.test$lambda.which, type="response",
                          model=c("full"))
-
-
-
-##birds sequence CV
-sample.size1 <- floor(0.85*max(as.numeric(birds$times)))
-set.seed(2016)
-
-train1 <- birds[birds$times %in% c(1:sample.size1),]
-test1 <- birds[!birds$times %in% c(1:sample.size1),]
-
-x1 <- subset(train1, select=-c(times,Obs))
-y1 <- as.matrix(subset(train1, select=Obs))
-y1.test <- as.matrix(subset(test1, select=Obs))
-x1.test <- subset(test1, select=-c(times,Obs))
-x1 <- model.matrix(~., x1)
-x1.test <-model.matrix(~., x1.test)
-library(doParallel)
-registerDoParallel(4)
-set.seed(2016)
-cv.lasso1 <- cv.glmnet(x=x1,y=y1,family="poisson",alpha=1,nfolds=10,parallel=TRUE)
-prediction.lasso1 <- predict(cv.lasso1,as.matrix(x1.test),type="response",s="lambda.min")
-mse.min1 <- cv.lasso1$cvm[cv.lasso1$lambda == cv.lasso1$lambda.min]
-rmse.lasso1 <- sqrt(mean((y1.test-prediction.lasso1)^2))
-mae.lasso1 <- mean(abs(y1.test-prediction.lasso1))
-
 
 
 
@@ -589,13 +566,6 @@ pr.nn <- compute(nn,x.test.mass[,-1])$net.result
 RMSE.nn <- sqrt(mean((y.test.mass-pr.nn)^2))
 
 
-# all features to class
-birdsmass <- mutate(birds.mass, peakmass=cut(birds.mass$peakmass,breaks=c(0,round(median(birds.mass$peakmass)),ceiling(max(birds.mass$peakmass))),right = FALSE,labels=c(0,1)))
-
-
-
-
-
 
 
 
@@ -605,49 +575,180 @@ attribute.mass <- attribute %>% subset(select=c(location,timestep,peak_mass))
 names(attribute.mass) <- c("location","times","peakmass")
 birds.mass <- birds %>% subset(select=-c(Obs)) %>% join(attribute.mass,by=c("times","location"),type="left")
 birds.mass[is.na(birds.mass)] <- 0
+# all features to class
+birdsmass <-birds.mass %>% mutate(peakmass=cut(birds.mass$peakmass,
+                                             breaks=c(0,round(median(birds.mass$peakmass)),
+                                                      ceiling(max(birds.mass$peakmass))),
+                                             right = FALSE,labels=c(0,1))) 
 
-library(neuralnet)
-samplesize.mass <- floor(0.85*max(as.numeric(birds.mass$times)))
+#h2O for NN classification
 set.seed(2016)
-train_id <- sample(seq_len(max(as.numeric(birds.mass$times))),size=samplesize.mass)
-mass.train <- birds.mass[birds.mass$times %in% train_id,]
-mass.test <- birds.mass[!birds.mass$times %in% train_id,]
-
-
-cv.error <- NULL
-k <- 5
-library(plyr) 
-pbar <- create_progress_bar('text')
-pbar$init(k)
-for(i in 1:k){
-  index <- sample(1:nrow(mass.train),round(0.85*nrow(mass.train)))
-  train.cv <- mass.train[index,]
-  test.cv <- mass.train[-index,]
-  x.mass <- train.cv[,-1]
-  y.mass <- train.cv[,421]
-  y.test.mass <- test.cv[,421]
-  x.test.mass <- test.cv[,c(-1,-421)]
-  x.mass <- model.matrix(~., x.mass)
-  x.test.mass <-model.matrix(~., x.test.mass)
-  n <- colnames(x.mass)[-1]
-  f <- as.formula(paste('peakmass ~', paste(n[!n %in% 'peakmass'], collapse = ' + ')))
-  nncv <- neuralnet(f,data=x.mass[,-1],hidden=c(120,30,6),linear.output=FALSE,threshold = 0.01,lifesign = "minimal")
-  pr.nn <- compute(nncv,x.test.mass[,-1])$net.result
-  cv.error[i] <- sqrt(mean((y.test.mass-pr.nn)^2))
-  pbar$step()
+folds <- data.frame(times=seq(1:max(as.numeric(birdsmass$times))),
+                    folds=cut(seq(1:max(as.numeric(birdsmass$times))),
+                              breaks=10,labels=seq(1:10)))
+birds.h2o <- join(birdsmass,folds,by="times")
+perform <-performance  <- rate <-  NULL
+models <- hidden <- predictions <-  list()
+library(h2o)
+h2o.init(max_mem_size = "8g",nthreads = -1)
+for (j in 1:2){
+  rand_hidden <- c(sample(10:180,3,T))
+  for (i in 1:8){
+  train <-  birds.h2o[birds.h2o$folds %in% c(1:i),]
+  valid <-  birds.h2o[birds.h2o$folds %in% c(i+1),]
+  birds.dl <- h2o.deeplearning(x = 2:420, y = 421, training_frame = as.h2o(train),
+                               activation="Tanh",hidden=rand_hidden,
+                               distribution = "bernoulli",
+                               epochs=0.1,loss ="CrossEntropy",validation_frame=as.h2o(valid))
+  perform[i] <- h2o.logloss(birds.dl, valid=T) 
+  }
+  performance[j] <- mean(perform)
+  hidden[j] <-  as.data.frame(rand_hidden)
+  models[j] <-  birds.dl
+  birds.class <- h2o.deeplearning(x = 2:420, y = 421, training_frame = as.h2o(birds.h2o[birds.h2o$folds %in% c(1:9),]),
+                                  activation="Tanh",hidden=rand_hidden,
+                                  distribution = "bernoulli",
+                                  epochs=0.1,loss ="CrossEntropy",validation_frame=as.h2o(valid))
+  predictions <- h2o.predict(birds.class, as.h2o(birds.h2o[birds.h2o$folds %in% c(10),]))
+  table <- table(birds.h2o[birds.h2o$folds %in% c(10),][,421],as.data.frame(predictions$predict)[,1])
+  rate[j] <- sum(diag(table))/sum(table)
 }
 
 
-#h2O for regression
-samplesize.mass <- floor(0.85*max(as.numeric(birds.mass$times)))
-set.seed(2016)
-train_id <- sample(seq_len(max(as.numeric(birds.mass$times))),size=samplesize.mass)
-mass.train <- birds.mass[birds.mass$times %in% train_id,]
-mass.test <- birds.mass[!birds.mass$times %in% train_id,]
-library(devtools)
-install_github("h2oai/h2o-3/h2o-r/ensemble/h2oEnsemble-package")
+
+
+
+
+
+
+
+
+#h2o for penalized
+
+folds <- data.frame(times=seq(1:max(as.numeric(birds.mass$times))),
+                    folds=cut(seq(1:max(as.numeric(birds.mass$times))),
+                              breaks=10,labels=seq(1:10)))
+birds.pv <- join(birds.mass,folds,by="times")
+alpha_opts <-  c(0,0.25,0.5,0.75,0.1)
+h2o.init(max_mem_size = "8g")
+rmse <-  perform <-performance  <-  NULL
+models <- list()
+for (j in 1:5){
+  hyper_parameters <-  alpha_opts[j]
+for (i in 1:8){
+  train <-  birds.pv[birds.pv$folds %in% c(1:i),]
+  valid <-  birds.pv[birds.pv$folds %in% c(i+1),]
+  birds.models <- h2o.glm(x = 2:420, y = 421, training_frame = as.h2o(train),
+                      family = "gaussian",lambda_search = T,nlambdas=100,
+                      validation_frame=as.h2o(valid),standardize=TRUE,
+                      alpha = hyper_parameters)
+  rmse[i] <- sqrt(h2o.mse(birds.models,valid = TRUE))
+}
+  models[j] <-  birds.models
+  performance[j] <- mean(rmse)
+}
+
+#h2O for NN regression
+
+folds <- data.frame(times=seq(1:max(as.numeric(birds.mass$times))),
+                    folds=cut(seq(1:max(as.numeric(birds.mass$times))),
+                              breaks=10,labels=seq(1:10)))
+birds.pv <- join(birds.mass,folds,by="times")
+h2o.init(max_mem_size = "8g")
+perform <-performance <-  NULL
+models <- list()
+for (j in 1:2){
+  rand_activation <- c("Rectifier", "RectifierWithDropout")[sample(1:2,1)]
+  rand_hidden <- c(sample(10:150,3,T))
+  for (i in 1:8){
+    train <-  birds.pv[birds.pv$folds %in% c(1:i),]
+    valid <-  birds.pv[birds.pv$folds %in% c(i+1),]
+    birds.dl <- h2o.deeplearning(x = 2:420, y = 421, training_frame = as.h2o(train),
+                                 activation=rand_activation,hidden=rand_hidden,
+                                 distribution ="gaussian",
+                                 epochs=0.1,loss ="Quadratic",validation_frame=as.h2o(valid),
+                                 l1=1e-05)
+    perform[i] <- sqrt(h2o.mse(birds.dl, valid=T)) 
+  }
+  models[j] <-  birds.dl
+  performance[j] <- mean(perform)
+}
+
+
+
+#penalized model for count # check error
+
+
+folds <- data.frame(times=seq(1:max(as.numeric(birds$times))),
+                    folds=cut(seq(1:max(as.numeric(birds$times))),
+                              breaks=10,labels=seq(1:10)))
+birds.count <- join(birds,folds,by="times")[,c(3:421,2,422)]
+alpha_opts <-  c(0,0.5,0.1)
+h2o.init(max_mem_size = "8g")
+rmse <-  perform <-performance  <-  NULL
+models <- list()
+for (j in 1:3){
+  hyper_parameters <-  alpha_opts[j]
+  for (i in 1:8){
+    train <-  birds.count[birds.count$folds %in% c(1:i),]
+    valid <-  birds.count[birds.count$folds %in% c(i+1),]
+    birds.models <- h2o.glm(x =2:420, y = 1, training_frame = as.h2o(train),
+                            family = "poisson",lambda_search = T,nlambdas=100,
+                            validation_frame=as.h2o(valid),standardize=TRUE,
+                            alpha = hyper_parameters)
+    rmse[i] <- sqrt(h2o.mse(birds.models,valid = TRUE))
+  }
+  models[j] <-  birds.models
+  performance[j] <- mean(rmse)
+}
+
+
+
+#--------------------------------#
+# comparison test
+birdsmass <-birds.mass %>% mutate(peakmass=cut(birds.mass$peakmass,
+                                               breaks=c(0,round(median(birds.mass$peakmass)),
+                                                        ceiling(max(birds.mass$peakmass))),
+                                               right = FALSE,labels=c(0,1))) 
+folds <- data.frame(times=seq(1:max(as.numeric(birdsmass$times))),
+                    folds=cut(seq(1:max(as.numeric(birdsmass$times))),
+                              breaks=10,labels=seq(1:10)))
+birds.h2o <- join(birdsmass,folds,by="times")
+folds <- data.frame(times=seq(1:max(as.numeric(birds.mass$times))),
+                    folds=cut(seq(1:max(as.numeric(birds.mass$times))),
+                              breaks=10,labels=seq(1:10)))
+birds.pv <- join(birds.mass,folds,by="times")
+
+perform <-performance <- models <- perform.rg <- perform.cl <-  NULL
 library(h2o)
-h2o.init()
-birds.dl <- h2o.deeplearning(x = 2:420, y = 421, training_frame = as.h2o(mass.train),hidden=c(120,30,6),
-                             activation='Rectifier',epochs=0.01,seed=2016,nfolds=5)
-RMSE.dl <- sqrt(mean((h2o.predict(birds.dl, as.h2o(mass.train))-mass.train[,421])^2))
+h2o.init(max_mem_size = "8g")
+  for (i in 1:8){
+    train.cl <-  birds.h2o[birds.h2o$folds %in% c(1:i),]
+    valid.cl <-  birds.h2o[birds.h2o$folds %in% c(i+1),]
+    train.rg <-  birds.pv[birds.pv$folds %in% c(1:i),]
+    valid.rg <-  birds.pv[birds.pv$folds %in% c(i+1),]
+    birds.cl <- h2o.deeplearning(x = 2:420, y = 421, training_frame = as.h2o(train.cl),
+                                 activation="Tanh",hidden=c(200,120,30),
+                                 distribution = "bernoulli",
+                                 epochs=0.1,loss ="CrossEntropy",validation_frame=as.h2o(valid.cl))
+    birds.rg <- h2o.deeplearning(x = 2:420, y = 421, training_frame = as.h2o(train.rg),
+                                 activation="Rectifier",hidden=c(200,120,30),
+                                 distribution ="gaussian",
+                                 epochs=0.1,loss ="Quadratic",validation_frame=as.h2o(valid.rg),
+                                 l1=1e-05)
+    perform.rg[i] <- sqrt(h2o.mse(birds.rg, valid=T)) 
+    perform.cl[i] <- h2o.logloss(birds.cl, valid=T) 
+  }
+
+predictions.cl <- h2o.predict(birds.cl, as.h2o(birds.h2o[birds.h2o$folds %in% c(10),]))
+predictions.rg <- h2o.predict(birds.rg, as.h2o(birds.pv[birds.pv$folds %in% c(10),]))
+
+table1 <- table(birds.h2o[birds.h2o$folds %in% c(10),][,421],as.data.frame(predictions.cl$predict)[,1])
+sum(diag(table1))/sum(table1)
+
+median <- round(median(birds.mass$peakmass))
+max <- ceiling(max(birds.mass$peakmass))
+cut1 <- cut(as.numeric(as.data.frame(birds.h2o[birds.h2o$folds %in% c(10),][,421])[,1]),breaks=c(0,median,max),right = FALSE,labels=c(0,1))
+cut2 <- cut(as.data.frame(predictions.rg)[,1],breaks=c(0,median,max),right = FALSE,labels=c(0,1))
+table2 <- table(cut1,cut2)
+sum(diag(table2))/sum(table2)
