@@ -54,22 +54,31 @@ def transform(arr):
     return neighboor
     
     
-   
-    np.c_[grid_dt_repeat.first(),trans.first()] 
-    array([[u'2016-04-07 02:40:00', u'loc22', u'0.0', u'29.0', u'20.0', u'0.0',
-        u'1.0', u'0.0', u'0.0', u'0.0', u'114.0'],
-       [u'2016-04-07 02:40:00', u'loc23', u'29.0', u'20.0', u'26.0',
-        u'1.0', u'0.0', u'11.0', u'0.0', u'114.0', u'22.0'],
-       [u'2016-04-07 02:40:00', u'loc32', u'0.0', u'1.0', u'0.0', u'0.0',
-        u'0.0', u'114.0', u'0.0', u'23.0', u'22.0'],
-       [u'2016-04-07 02:40:00', u'loc33', u'1.0', u'0.0', u'11.0', u'0.0',
-        u'114.0', u'22.0', u'23.0', u'22.0', u'9.0'],
-       [u'2016-04-07 02:40:00', u'loc42', u'0.0', u'0.0', u'114.0', u'0.0',
-        u'23.0', u'22.0', u'0.0', u'0.0', u'7.0'],
-       [u'2016-04-07 02:40:00', u'loc43', u'0.0', u'114.0', u'22.0',
-        u'23.0', u'22.0', u'9.0', u'0.0', u'7.0', u'6.0'],
-       [u'2016-04-07 02:40:00', u'loc52', u'0.0', u'23.0', u'22.0', u'0.0',
-        u'0.0', u'7.0', u'0.0', u'14.0', u'3.0'],
-       [u'2016-04-07 02:40:00', u'loc53', u'23.0', u'22.0', u'9.0', u'0.0',
-        u'7.0', u'6.0', u'14.0', u'3.0', u'0.0']], 
-      dtype='<U32')
+ def transform(arr): 
+    submatrix = []
+    for i in range(0,4):
+        for j in range(0,2):
+            submatrix.append((arr.reshape(6,4)[i:i+3,j:j+3]).flatten())
+    submatrix = np.array(submatrix)
+    location = ("loc22","loc23","loc32","loc33","loc42","loc43","loc52","loc53")
+    location = np.array(location)
+    neighboor = np.c_[location,submatrix]
+    neighboor = pd.DataFrame(neighboor)
+    return neighboor
+    
+grid_dt = grid_space.select('dt').toPandas()
+grid_dt_repeat = grid_dt.apply(lambda x: np.repeat(x, 8))
+grid_trans = grid_space.drop(grid_space.dt).toPandas()
+transform = grid_trans.apply(lambda x: transform(x),axis=1)
+
+
+submatrix = []
+for i in range(0,4):
+        for j in range(0,2):
+            submatrix.append(grid_trans.iloc[3].reshape(6,4)[i:i+3,j:j+3].flatten())
+submatrix= np.array(submatrix)
+location = ("loc22","loc23","loc32","loc33","loc42","loc43","loc52","loc53")
+location = np.array(location)
+neighboor = np.c_[location,submatrix]
+neighboor = pd.DataFrame(neighboor)
+print neighboor
