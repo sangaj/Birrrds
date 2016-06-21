@@ -340,7 +340,7 @@ dframehour <- join(dframe,Hours,by=c("times","location"),type="left")
 bird <- join(dframehour,weather.join,by=c("times","location"),type="left")
 birds <- join(bird,attrall,by=c("times","location"),type="left")%>% subset(select=-c(ten))%>% subset(select=-c(ten))
 
-
+save(birds,file="birds.Rdata")
 
 
 ##birds
@@ -592,7 +592,8 @@ perform <-performance  <- rate <-  NULL
 models <- hidden <- predictions <-  list()
 library(h2o)
 h2o.init(max_mem_size = "16g",nthreads = -1)
-for (j in 1:5){
+set.seed(2016)
+for (j in 1:1){
   rand_hidden <- c(sample(10:200,3,T))
   for (i in 0:8){
   train <-  birds.h2o[birds.h2o$folds %in% c(1:10+i),]
@@ -600,7 +601,7 @@ for (j in 1:5){
   birds.dl <- h2o.deeplearning(x = 2:419, y = 420, training_frame = as.h2o(train),
                                activation="Tanh",hidden=rand_hidden,
                                distribution = "bernoulli",
-                               epochs=0.1,loss ="CrossEntropy",validation_frame=as.h2o(valid))
+                               loss ="CrossEntropy",validation_frame=as.h2o(valid))
   perform[i] <- h2o.logloss(birds.dl, valid=T) 
   }
   performance[j] <- mean(perform)
@@ -609,7 +610,7 @@ for (j in 1:5){
   birds.class <- h2o.deeplearning(x = 2:419, y = 420, training_frame = as.h2o(birds.h2o[birds.h2o$folds %in% c(1:19),]),
                                   activation="Tanh",hidden=rand_hidden,
                                   distribution = "bernoulli",
-                                  epochs=0.1,loss ="CrossEntropy")
+                                  loss ="CrossEntropy")
   predictions <- h2o.predict(birds.class, as.h2o(birds.h2o[birds.h2o$folds %in% c(20),]))
   table <- table(birds.h2o[birds.h2o$folds %in% c(20),][,420],as.data.frame(predictions$predict)[,1])
   rate[j] <- sum(diag(table))/sum(table)
@@ -617,29 +618,22 @@ for (j in 1:5){
 
 
 
-
-
-
-
-
-
-
 #h2o for penalized
 
 folds <- data.frame(times=seq(1:max(as.numeric(birds.mass$times))),
                     folds=cut(seq(1:max(as.numeric(birds.mass$times))),
-                              breaks=10,labels=seq(1:10)))
+                              breaks=20,labels=seq(1:20)))
 birds.pv <- join(birds.mass,folds,by="times")
-alpha_opts <-  c(0,0.25,0.5,0.75,0.1)
-h2o.init(max_mem_size = "8g")
+alpha_opts <-  c(0,0.25,0.5,0.75,1)
+h2o.init(max_mem_size = "16g",nthreads = -1)
 rmse <-  perform <-performance  <-  NULL
 models <- list()
 for (j in 1:5){
   hyper_parameters <-  alpha_opts[j]
-for (i in 1:8){
-  train <-  birds.pv[birds.pv$folds %in% c(1:i),]
-  valid <-  birds.pv[birds.pv$folds %in% c(i+1),]
-  birds.models <- h2o.glm(x = 2:420, y = 421, training_frame = as.h2o(train),
+for (i in 0:8){
+  train <-  birds.pv[birds.pv$folds %in% c(1:10+i),]
+  valid <-  birds.pv[birds.pv$folds %in% c(i+11),]
+  birds.models <- h2o.glm(x = 2:419, y = 420, training_frame = as.h2o(train),
                       family = "gaussian",lambda_search = T,nlambdas=100,
                       validation_frame=as.h2o(valid),standardize=TRUE,
                       alpha = hyper_parameters)
@@ -648,6 +642,13 @@ for (i in 1:8){
   models[j] <-  birds.models
   performance[j] <- mean(rmse)
 }
+birds.class <- h2o.glm(x = 2:419, y = 420, training_frame = as.h2o(birds.pv[birds.pv$folds %in% c(1:19),]),
+                       family = "gaussian",lambda = 0.004839,alpha=1,standardize=TRUE)
+predictions <- h2o.predict(birds.class, as.h2o(birds.pv[birds.pv$folds %in% c(20),]))
+RMSE <- sqrt(mean((birds.pv[birds.pv$folds %in% c(20),][,420] - as.data.frame(predictions$predict)[,1])^2))
+MAE <- mean(abs(birds.pv[birds.pv$folds %in% c(20),][,420] - as.data.frame(predictions$predict)[,1]))
+
+
 
 #h2O for NN regression
 
@@ -677,31 +678,6 @@ for (j in 1:2){
 
 
 
-#penalized model for count # check error
-
-
-folds <- data.frame(times=seq(1:max(as.numeric(birds$times))),
-                    folds=cut(seq(1:max(as.numeric(birds$times))),
-                              breaks=10,labels=seq(1:10)))
-birds.count <- join(birds,folds,by="times")[,c(3:421,2,422)]
-alpha_opts <-  c(0,0.5,0.1)
-h2o.init(max_mem_size = "8g")
-rmse <-  perform <-performance  <-  NULL
-models <- list()
-for (j in 1:3){
-  hyper_parameters <-  alpha_opts[j]
-  for (i in 1:8){
-    train <-  birds.count[birds.count$folds %in% c(1:i),]
-    valid <-  birds.count[birds.count$folds %in% c(i+1),]
-    birds.models <- h2o.glm(x =2:420, y = 1, training_frame = as.h2o(train),
-                            family = "poisson",lambda_search = T,nlambdas=100,
-                            validation_frame=as.h2o(valid),standardize=TRUE,
-                            alpha = hyper_parameters)
-    rmse[i] <- sqrt(h2o.mse(birds.models,valid = TRUE))
-  }
-  models[j] <-  birds.models
-  performance[j] <- mean(rmse)
-}
 
 
 
@@ -731,23 +707,23 @@ h2o.init(max_mem_size = "16g",nthreads = -1)
     birds.cl <- h2o.deeplearning(x = 2:419, y = 420, training_frame = as.h2o(train.cl),
                                  activation="Tanh",hidden=c(200,120,30),
                                  distribution = "bernoulli",
-                                 epochs=0.1,loss ="CrossEntropy",validation_frame=as.h2o(valid.cl))
+                                 loss ="CrossEntropy",validation_frame=as.h2o(valid.cl))
     birds.rg <- h2o.deeplearning(x = 2:419, y = 420, training_frame = as.h2o(train.rg),
                                  activation="Rectifier",hidden=c(200,120,30),
                                  distribution ="gaussian",
-                                 epochs=0.1,loss ="Quadratic",validation_frame=as.h2o(valid.rg),
+                                 loss ="Quadratic",validation_frame=as.h2o(valid.rg),
                                  l1=1e-05)
     perform.rg[i] <- sqrt(h2o.mse(birds.rg, valid=T)) 
     perform.cl[i] <- h2o.logloss(birds.cl, valid=T) 
   }
 birds.cl <- h2o.deeplearning(x = 2:419, y = 420, training_frame = as.h2o(birds.h2o[birds.h2o$folds %in% c(1:19),]),
-                                activation="Tanh",hidden=c(200,120,30),
+                                activation="Tanh",hidden=c(127,180,10),
                                 distribution = "bernoulli",
-                                epochs=0.1,loss ="CrossEntropy")
-birds.rg <- h2o.deeplearning(x = 2:419, y = 420, training_frame = as.h2o(birds.h2o[birds.h2o$folds %in% c(1:19),]),
-                             activation="Rectifier",hidden=c(200,120,30),
+                                loss ="CrossEntropy")
+birds.rg <- h2o.deeplearning(x = 2:419, y = 420, training_frame = as.h2o(birds.pv[birds.pv$folds %in% c(1:19),]),
+                             activation="Rectifier",hidden=c(127,180,10),
                              distribution ="gaussian",
-                             epochs=0.1,loss ="Quadratic",l1=1e-05)
+                             loss ="Quadratic",l1=1e-05)
 predictions.cl <- h2o.predict(birds.cl, as.h2o(birds.h2o[birds.h2o$folds %in% c(20),]))
 predictions.rg <- h2o.predict(birds.rg, as.h2o(birds.pv[birds.pv$folds %in% c(20),]))
 
