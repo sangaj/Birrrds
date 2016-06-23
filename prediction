@@ -31,9 +31,10 @@ map <- map + geom_tile(data = joinmap, aes(x = long, y = lat, alpha = Obs),fill=
 plot(map)
 ggsave('alasso51.png', map)
 
-
-
-
+t1 <- birds.h2o[birds.h2o$folds %in% c(20),][,c(1,2,420)]
+t2 <- cbind(as.data.frame(t1),as.data.frame(predictions.cl))
+t2 <- t2[order(t2$times),]
+write.csv(t2,file="t2.csv",row.names=FALSE)
 l_lon <-  4.706
 r_lat <-  52.368
 r_lon <-  4.717
