@@ -30,3 +30,31 @@ map <- qmap(location = '2132MH', zoom = 12)
 map <- map + geom_tile(data = joinmap, aes(x = long, y = lat, alpha = Obs),fill='blue') + theme(axis.title.y = element_blank(), axis.title.x = element_blank())
 plot(map)
 ggsave('alasso51.png', map)
+
+
+
+
+l_lon <-  4.706
+r_lat <-  52.368
+r_lon <-  4.717
+l_lat <-  52.325
+lat_det <-  2/111
+lon_det <-  2/(cos(r_lat*pi/180)*111.321)
+bound_x <-  c(l_lon-lon_det,l_lat-lat_det)
+bound_y <-  c(r_lon+lon_det,r_lat+lat_det)
+gridx <- seq(l_lon-lon_det,r_lon+lon_det,length.out=4)
+gridy <- seq(l_lat-lat_det,r_lat+lat_det,length.out=6)
+grid <- expand.grid(x = gridx, y = gridy)
+grid$XX <- rep(1:4, times=6)
+grid$YY <- rep(1:6, each=4)
+grid$location <-  paste("loc",grid$XX, grid$YY, sep="")
+library(ggplot2)
+library(ggmap)
+for (i in 42409:42414){
+  heatmapdata <- t2[t2$times %in% c(i),c(1,2,6)]
+  joinmap <- join(heatmapdata,grid,by="location")[,c(3,4,5)]
+  names(joinmap) <- c('massprob', 'long', 'lat')
+  map <- qmap(location = '241CN', zoom = 12) 
+  map <- map + geom_tile(data = joinmap, aes(x = long, y = lat, alpha = massprob),fill='blue') + theme(axis.title.y = element_blank(), axis.title.x = element_blank())
+  ggsave(paste('',i, 'predict.png', sep=""), map)
+}
