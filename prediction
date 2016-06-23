@@ -1,0 +1,32 @@
+### prediction
+pred <- read.table("out adlasso.csv",header=T,sep=",")
+l_lon <-  4.705
+r_lat <-  52.368
+r_lon <-  4.815
+l_lat <-  52.283
+lat_det <-  2/111
+lon_det <-  2/(cos(l_lat*pi/180)*111.321)
+bound_x <-  c(l_lon-lon_det,l_lat-lat_det)
+bound_y <-  c(r_lon+lon_det,r_lat+lat_det)
+gridx <- seq(l_lon-lon_det,r_lon+lon_det,length.out=9)
+gridy <- seq(l_lat-lat_det,r_lat+lat_det,length.out=9)
+grid <- expand.grid(x = gridx[1:8], y = gridy[1:8])
+grid$XX <- rep(1:8, times=8)
+grid$YY <- rep(8:1, each=8)
+grid$location <-  paste("loc",grid$XX, grid$YY, sep="")
+for (i in 37720:37724){
+  heatmapdata <- pred[pred$ts %in% c(i),1:3]
+  joinmap <- join(heatmapdata,grid,by="location")[,c(1,4,5)]
+  names(joinmap) <- c('Obs', 'long', 'lat')
+  map <- qmap(location = '2132MH', zoom = 12) 
+  map <- map + geom_tile(data = joinmap, aes(x = long, y = lat, alpha = Obs),fill='blue') + theme(axis.title.y = element_blank(), axis.title.x = element_blank())
+  ggsave(paste('',i, 'predict.png', sep=""), map)
+}
+
+heatmapdata <- pred[pred$ts %in% c(37720),1:3]
+joinmap <- join(heatmapdata,grid,by="location")[,c(1,4,5)]
+names(joinmap) <- c('Obs', 'long', 'lat')
+map <- qmap(location = '2132MH', zoom = 12) 
+map <- map + geom_tile(data = joinmap, aes(x = long, y = lat, alpha = Obs),fill='blue') + theme(axis.title.y = element_blank(), axis.title.x = element_blank())
+plot(map)
+ggsave('alasso51.png', map)
