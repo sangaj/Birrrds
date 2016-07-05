@@ -1,4 +1,5 @@
 
+
 rm(list=ls())
 gc(reset=TRUE)
 
@@ -591,17 +592,16 @@ birds.h2o <- join(birdsmass,folds,by="times")
 perform <-performance  <- rate <-  NULL
 models <- hidden <- predictions <-  list()
 library(h2o)
-h2o.init(max_mem_size = "16g",nthreads = -1)
-set.seed(2016)
-for (j in 1:1){
-  rand_hidden <- c(sample(10:200,3,T))
+h2o.init(max_mem_size = "8g",nthreads = -1)
+for (j in 1:5){
+  rand_hidden <- c(sample(1:200,5,T))
   for (i in 0:8){
   train <-  birds.h2o[birds.h2o$folds %in% c(1:10+i),]
   valid <-  birds.h2o[birds.h2o$folds %in% c(i+11),]
   birds.dl <- h2o.deeplearning(x = 2:419, y = 420, training_frame = as.h2o(train),
                                activation="Tanh",hidden=rand_hidden,
                                distribution = "bernoulli",
-                               loss ="CrossEntropy",validation_frame=as.h2o(valid))
+                               loss ="CrossEntropy",validation_frame=as.h2o(valid),l2=1e-05)
   perform[i] <- h2o.logloss(birds.dl, valid=T) 
   }
   performance[j] <- mean(perform)
@@ -610,10 +610,11 @@ for (j in 1:1){
   birds.class <- h2o.deeplearning(x = 2:419, y = 420, training_frame = as.h2o(birds.h2o[birds.h2o$folds %in% c(1:19),]),
                                   activation="Tanh",hidden=rand_hidden,
                                   distribution = "bernoulli",
-                                  loss ="CrossEntropy")
+                                  loss ="CrossEntropy",l2=1e-05)
   predictions <- h2o.predict(birds.class, as.h2o(birds.h2o[birds.h2o$folds %in% c(20),]))
   table <- table(birds.h2o[birds.h2o$folds %in% c(20),][,420],as.data.frame(predictions$predict)[,1])
   rate[j] <- sum(diag(table))/sum(table)
+  print(rate)
 }
 
 
@@ -707,7 +708,7 @@ h2o.init(max_mem_size = "16g",nthreads = -1)
     birds.cl <- h2o.deeplearning(x = 2:419, y = 420, training_frame = as.h2o(train.cl),
                                  activation="Tanh",hidden=c(200,120,30),
                                  distribution = "bernoulli",
-                                 loss ="CrossEntropy",validation_frame=as.h2o(valid.cl))
+                                 loss ="CrossEntropy",validation_frame=as.h2o(valid.cl),l1=1e-05)
     birds.rg <- h2o.deeplearning(x = 2:419, y = 420, training_frame = as.h2o(train.rg),
                                  activation="Rectifier",hidden=c(200,120,30),
                                  distribution ="gaussian",
@@ -718,14 +719,17 @@ h2o.init(max_mem_size = "16g",nthreads = -1)
   }
 birds.cl <- h2o.deeplearning(x = 2:419, y = 420, training_frame = as.h2o(birds.h2o[birds.h2o$folds %in% c(1:19),]),
                                 activation="Tanh",hidden=c(127,180,10),
-                                distribution = "bernoulli",
+                                distribution = "bernoulli",epochs = 1000,
                                 loss ="CrossEntropy")
 birds.rg <- h2o.deeplearning(x = 2:419, y = 420, training_frame = as.h2o(birds.pv[birds.pv$folds %in% c(1:19),]),
                              activation="Rectifier",hidden=c(127,180,10),
                              distribution ="gaussian",
-                             loss ="Quadratic",l1=1e-05)
+                             loss ="Quadratic",l1=1e-05,epochs = 1000)
 predictions.cl <- h2o.predict(birds.cl, as.h2o(birds.h2o[birds.h2o$folds %in% c(20),]))
 predictions.rg <- h2o.predict(birds.rg, as.h2o(birds.pv[birds.pv$folds %in% c(20),]))
+predictions.rg$predict[predictions.rg$predict < 0] <- 0
+RMSE <- sqrt(mean((birds.pv[birds.pv$folds %in% c(20),][,420] - as.data.frame(predictions.rg$predict)[,1])^2))
+MAE <- mean(abs(birds.pv[birds.pv$folds %in% c(20),][,420] - as.data.frame(predictions.rg$predict)[,1]))
 
 table1 <- table(birds.h2o[birds.h2o$folds %in% c(20),][,420],as.data.frame(predictions.cl$predict)[,1])
 sum(diag(table1))/sum(table1)
@@ -737,6 +741,87 @@ cut2 <- cut(as.data.frame(predictions.rg)[,1],breaks=c(0,median,max),right = FAL
 table2 <- table(cut1,cut2)
 sum(diag(table2))/sum(table2)
 
+#ROC curve
+birds.cl <- h2o.deeplearning(x = 2:419, y = 420, training_frame = as.h2o(birds.h2o[birds.h2o$folds %in% c(1:19),]),
+                             activation="Tanh",hidden=c(52,177,57),
+                             distribution = "bernoulli",epochs = 1000,
+                             loss ="CrossEntropy")
+predictions.cl <- h2o.predict(birds.cl, as.h2o(birds.h2o[birds.h2o$folds %in% c(20),]))
+t <- birds.h2o[birds.h2o$folds %in% c(20),][,420]
+toutput <- cbind(as.data.frame(t),as.data.frame(predictions.cl))
+write.csv(toutput, file="5217757.csv",row.names=FALSE)
 
 
 h2o.shutdown()
+
+
+YY# prediction
+t1 <- birds.h2o[birds.h2o$folds %in% c(20),][,c(1,2,420)]
+t3 <- birds.pv[birds.pv$folds %in% c(20),][,420]
+t2 <- cbind(as.data.frame(t1),as.data.frame(predictions.rg),t3)
+t2 <- t2[order(t2$times),]
+write.csv(t2,file="t3.csv",row.names=FALSE)
+
+
+l_lon <-  4.706
+r_lat <-  52.368
+r_lon <-  4.717
+l_lat <-  52.325
+lat_det <-  2/111
+lon_det <-  2/(cos(r_lat*pi/180)*111.321)
+bound_x <-  c(l_lon-lon_det,l_lat-lat_det)
+bound_y <-  c(r_lon+lon_det,r_lat+lat_det)
+gridx <- seq(l_lon-lon_det,r_lon+lon_det,length.out=4)
+gridy <- seq(l_lat-lat_det,r_lat+lat_det,length.out=6)
+grid <- expand.grid(x = gridx, y = gridy)
+grid$XX <- rep(1:4, times=6)
+grid$YY <- rep(1:6, each=4)
+grid$location <-  paste("loc",grid$XX, grid$YY, sep="")
+library(ggplot2)
+library(ggmap)
+for (i in 42409:42414){
+  heatmapdata <- t2[t2$times %in% c(i),c(1,2,6)]
+  joinmap <- join(heatmapdata,grid,by="location")[,c(3,4,5)]
+  names(joinmap) <- c('massprob', 'long', 'lat')
+  map <- qmap(location = '241CN', zoom = 12) 
+  map <- map + geom_tile(data = joinmap, aes(x = long, y = lat, alpha = massprob),fill='blue') + theme(axis.title.y = element_blank(), axis.title.x = element_blank())
+  ggsave(paste('',i, 'predict.png', sep=""), map)
+}
+
+
+# best L2 # long time not recommend
+
+#h2O for NN classification
+folds <- data.frame(times=seq(1:max(as.numeric(birdsmass$times))),
+                    folds=cut(seq(1:max(as.numeric(birdsmass$times))),
+                              breaks=20,labels=seq(1:20)))
+birds.h2o <- join(birdsmass,folds,by="times")
+perform <-performance  <- rate <-  NULL
+models <- hidden <- predictions <-  list()
+library(h2o)
+h2o.init(max_mem_size = "8g",nthreads = -1)
+l2 <- seq(0.01,1,0.04)
+rand_hidden <- c(69,171,154,179,57)
+for (j in 1:length(l2)){
+  for (i in 0:8){
+    train <-  birds.h2o[birds.h2o$folds %in% c(1:10+i),]
+    valid <-  birds.h2o[birds.h2o$folds %in% c(i+11),]
+    birds.dl <- h2o.deeplearning(x = 2:419, y = 420, training_frame = as.h2o(train),
+                                 activation="Tanh",hidden=rand_hidden,
+                                 distribution = "bernoulli",
+                                 loss ="CrossEntropy",validation_frame=as.h2o(valid),l2=l2[j])
+    perform[i] <- h2o.logloss(birds.dl, valid=T) 
+  }
+  performance[j] <- mean(perform)
+  hidden[j] <-  as.data.frame(rand_hidden)
+  models[j] <-  birds.dl
+  birds.class <- h2o.deeplearning(x = 2:419, y = 420, training_frame = as.h2o(birds.h2o[birds.h2o$folds %in% c(1:19),]),
+                                  activation="Tanh",hidden=rand_hidden,
+                                  distribution = "bernoulli",
+                                  loss ="CrossEntropy",l2=l2[j])
+  predictions <- h2o.predict(birds.class, as.h2o(birds.h2o[birds.h2o$folds %in% c(20),]))
+  table <- table(birds.h2o[birds.h2o$folds %in% c(20),][,420],as.data.frame(predictions$predict)[,1])
+  rate[j] <- sum(diag(table))/sum(table)
+}
+
+
