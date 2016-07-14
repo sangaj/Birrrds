@@ -1,5 +1,4 @@
 
-
 rm(list=ls())
 gc(reset=TRUE)
 
@@ -593,8 +592,8 @@ perform <-performance  <- rate <-  NULL
 models <- hidden <- predictions <-  list()
 library(h2o)
 h2o.init(max_mem_size = "8g",nthreads = -1)
-for (j in 1:5){
-  rand_hidden <- c(sample(1:200,5,T))
+for (j in 1:1){
+  rand_hidden <- c(sample(1:200,8,T))
   for (i in 0:8){
   train <-  birds.h2o[birds.h2o$folds %in% c(1:10+i),]
   valid <-  birds.h2o[birds.h2o$folds %in% c(i+11),]
@@ -614,9 +613,8 @@ for (j in 1:5){
   predictions <- h2o.predict(birds.class, as.h2o(birds.h2o[birds.h2o$folds %in% c(20),]))
   table <- table(birds.h2o[birds.h2o$folds %in% c(20),][,420],as.data.frame(predictions$predict)[,1])
   rate[j] <- sum(diag(table))/sum(table)
-  print(rate)
 }
-
+h2o.shutdown()
 
 
 #h2o for penalized
@@ -699,7 +697,7 @@ birds.pv <- join(birds.mass,folds,by="times")
 
 perform <-performance <- models <- perform.rg <- perform.cl <-  NULL
 library(h2o)
-h2o.init(max_mem_size = "16g",nthreads = -1)
+h2o.init(max_mem_size = "8g",nthreads = -1)
   for (i in 0:8){
     train.cl <-  birds.h2o[birds.h2o$folds %in% c(1:10+i),]
     valid.cl <-  birds.h2o[birds.h2o$folds %in% c(i+11),]
