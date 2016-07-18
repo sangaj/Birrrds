@@ -1,8 +1,8 @@
-
+# remove and clean environment and history  
 rm(list=ls())
 gc(reset=TRUE)
 
-# analysis
+# analysis for spatial features
 gridspace <- read.table("spatial.csv",header=T,sep=",")
 library(plyr)
 library(dplyr)
@@ -183,7 +183,8 @@ mae.lasso <- mean(abs(y.test-prediction.lasso))
 
 
 #----------------------------------#
-# spatial features
+# all features
+
 gridspace <- read.table("spatial.csv",header=T,sep=",")
 gridspace <- gridspace[order(gridspace$timestep),-1]
 timestep <- as.data.frame(c(1:44640))
@@ -753,7 +754,7 @@ write.csv(toutput, file="5217757.csv",row.names=FALSE)
 h2o.shutdown()
 
 
-YY# prediction
+# prediction plot
 t1 <- birds.h2o[birds.h2o$folds %in% c(20),][,c(1,2,420)]
 t3 <- birds.pv[birds.pv$folds %in% c(20),][,420]
 t2 <- cbind(as.data.frame(t1),as.data.frame(predictions.rg),t3)
@@ -823,3 +824,45 @@ for (j in 1:length(l2)){
 }
 
 
+
+#------------#
+#SVM#
+# cv for nn
+attribute.mass <- attribute %>% subset(select=c(location,timestep,peak_mass))
+names(attribute.mass) <- c("location","times","peakmass")
+birds.mass <- birds %>% subset(select=-c(Obs)) %>% join(attribute.mass,by=c("times","location"),type="left")
+birds.mass[is.na(birds.mass)] <- 0
+# all features to class
+birdsmass <-birds.mass %>% mutate(peakmass=cut(birds.mass$peakmass,
+                                               breaks=c(0,round(median(birds.mass$peakmass)),
+                                                        ceiling(max(birds.mass$peakmass))),
+                                               right = FALSE,labels=c(0,1))) 
+
+#h2O for NN classification
+folds <- data.frame(times=seq(1:max(as.numeric(birdsmass$times))),
+                    folds=cut(seq(1:max(as.numeric(birdsmass$times))),
+                              breaks=20,labels=seq(1:20)))
+birds.svm <- join(birdsmass,folds,by="times")[,-1]
+cost <- 10^(-1:2)
+gamma <- c(0.5,1)
+epsilon <- seq(0.5,1,0.1)
+par <- expand.grid(cost,gamma,epsilon)
+
+
+eval <- function(j){
+  rate <- NULL
+  for (i in 0:8){
+    library(e1071)
+    train <-  birds.svm[birds.svm$folds %in% c(1:10+i),-ncol(birds.svm)]
+    valid <-  birds.svm[birds.svm$folds %in% c(i+11),-which(names(birds.svm) %in% c("peakmass","folds"))]
+    birds.svm <- svm(peakmass~.,data=train,cost=par[j,1],gamma=par[j,2],epsilon=par[j,3])
+    predicted <- predict(birds.svm,data=valid)
+    table <- table(predicted ,valid$peakmass)
+    rate <- cbind(rate,sum(diag(table))/sum(table))
+  }
+  mean(rate)
+}
+library(doParallel)
+registerDoParallel()
+getDoParWorkers()
+pr <- foreach(j=1:length(par),.combine=list)%dopar%eval(j)
