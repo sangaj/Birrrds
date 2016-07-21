@@ -839,30 +839,31 @@ birdsmass <-birds.mass %>% mutate(peakmass=cut(birds.mass$peakmass,
                                                right = FALSE,labels=c(0,1))) 
 
 #h2O for NN classification
-folds <- data.frame(times=seq(1:max(as.numeric(birdsmass$times))),
-                    folds=cut(seq(1:max(as.numeric(birdsmass$times))),
+
+folds <- data.frame(times=seq(1:max(as.numeric(birds.mass$times))),
+                    folds=cut(seq(1:max(as.numeric(birds.mass$times))),
                               breaks=20,labels=seq(1:20)))
-birds.svm <- join(birdsmass,folds,by="times")[,-1]
+birds.svm <- join(birds.mass,folds,by="times")[,-1]
 cost <- 10^(-1:2)
 gamma <- c(0.5,1)
-epsilon <- seq(0.5,1,0.1)
+epsilon <- seq(0.1,0.5)
 par <- expand.grid(cost,gamma,epsilon)
 
 
 eval <- function(j){
   rate <- NULL
-  for (i in 0:8){
+  for (i in 0:0){
     library(e1071)
-    train <-  birds.svm[birds.svm$folds %in% c(1:10+i),-ncol(birds.svm)]
-    valid <-  birds.svm[birds.svm$folds %in% c(i+11),-which(names(birds.svm) %in% c("peakmass","folds"))]
+    train <-  birds.svm[birds.svm$folds %in% c(1:4+i),-ncol(birds.svm)]
+    valid <-  birds.svm[birds.svm$folds %in% c(i+5),-ncol(birds.svm)]
     birds.svm <- svm(peakmass~.,data=train,cost=par[j,1],gamma=par[j,2],epsilon=par[j,3])
-    predicted <- predict(birds.svm,data=valid)
-    table <- table(predicted ,valid$peakmass)
-    rate <- cbind(rate,sum(diag(table))/sum(table))
+    predicted <- predict(birds.svm,valid[,-which(names(valid)%in%("peakmass"))])
+    error <- valid$peakmass - predicted 
+    rate <- cbind(rate, sqrt(mean(error^2)))
   }
   mean(rate)
 }
 library(doParallel)
-registerDoParallel()
+registerDoParallel(cores=8)
 getDoParWorkers()
-pr <- foreach(j=1:length(par),.combine=list)%dopar%eval(j)
+pr <- foreach(j=1:nrow(par),.combine=rbind)%dopar%eval(j)
